@@ -13,13 +13,13 @@ case "${1:-status}" in
       systemd-run --user --quiet --collect --unit="$db" --working-directory="$project" --setenv="LD_LIBRARY_PATH=$libs" -p UMask=0077 -p Restart=on-failure -- "$runtime/sbin/mariadbd" --no-defaults --basedir="$runtime" --datadir="$project/var/maria-data" --socket="$project/var/mysql.sock" --pid-file="$project/var/mysql.pid" --skip-networking --innodb-buffer-pool-size=96M --max-connections=24
     fi
     if ! systemctl --user is-active --quiet "$worker"; then
-      systemd-run --user --quiet --collect --setenv="LD_LIBRARY_PATH=$libs" --unit="$worker" --working-directory="$project" -p UMask=0077 -p Restart=on-failure -- "$project/.venv/bin/python" manage.py worker
+      systemd-run --user --quiet --collect --setenv="LD_LIBRARY_PATH=$libs" --unit="$worker" --working-directory="$project" -p UMask=0077 -p Restart=on-failure -p RestartSec=2s -- "$project/.venv/bin/python" manage.py worker
     fi
     if ! systemctl --user is-active --quiet coding-contest-pilot-presence; then
-      systemd-run --user --quiet --collect --setenv="LD_LIBRARY_PATH=$libs" --unit=coding-contest-pilot-presence --working-directory="$project" -p UMask=0077 -p Restart=on-failure -- "$project/.venv/bin/python" manage.py presence
+      systemd-run --user --quiet --collect --setenv="LD_LIBRARY_PATH=$libs" --unit=coding-contest-pilot-presence --working-directory="$project" -p UMask=0077 -p Restart=on-failure -p RestartSec=2s -- "$project/.venv/bin/python" manage.py presence
     fi
     if ! systemctl --user is-active --quiet "$web"; then
-      systemd-run --user --quiet --collect --setenv="LD_LIBRARY_PATH=$libs" --unit="$web" --working-directory="$project" -p UMask=0077 -p Restart=on-failure -- "$project/.venv/bin/python" -m gunicorn --bind 127.0.0.1:8765 --workers 2 contest.wsgi:application
+      systemd-run --user --quiet --collect --setenv="LD_LIBRARY_PATH=$libs" --unit="$web" --working-directory="$project" -p UMask=0077 -p Restart=on-failure -p RestartSec=2s -- "$project/.venv/bin/python" -m gunicorn --bind 127.0.0.1:8765 --workers 2 contest.wsgi:application
     fi
     ;;
   restart)
