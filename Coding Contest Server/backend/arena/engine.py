@@ -13,7 +13,8 @@ def standings(contest,include_entries=False):
         solves={}
         for job in Job.objects.filter(entry=entry,kind="submit",state="done",result__verdict="Accepted").order_by("received","id"):
             solves.setdefault(str(job.problem_id),max(0,int((job.received-contest.starts).total_seconds())))
-        rows.append(dict(name=entry.display,score=sum(points[k] for k in solves),solved=len(solves),seconds=sum(solves.values()),problems=solves))
+        valid_solves={k:v for k,v in solves.items() if k in points}
+        rows.append(dict(name=entry.display,score=sum(points.get(k,0) for k in valid_solves),solved=len(valid_solves),seconds=sum(valid_solves.values()),problems=valid_solves))
         if include_entries:rows[-1]["entry_id"]=entry.pk
     rows.sort(key=lambda r:(-r["score"],r["seconds"],r["name"]))
     previous=None

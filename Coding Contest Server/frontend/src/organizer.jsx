@@ -694,7 +694,17 @@ function FetchContestModal({onClose, onFetched}) {
 
 export function Organizer({session}) {
   const [contests, setContests] = useState(session.contests || []);
-  const [cid, pick] = useState(Number(new URLSearchParams(location.search).get('contest')) || session.contests[0]?.id);
+  const initialCid = Number(new URLSearchParams(location.search).get('contest'));
+  const validCid = (session.contests || []).some(c => c.id === initialCid) ? initialCid : (session.contests?.[0]?.id || null);
+  const [cid, setCid] = useState(validCid);
+  function pick(id) {
+    setCid(id);
+    if (id) {
+      const url = new URL(location.href);
+      url.searchParams.set('contest', id);
+      history.replaceState(null, '', url.toString());
+    }
+  }
   const [data, load] = useState(null);
   const [tab, select] = useState('Problems');
   const [notice, notify] = useState('');
