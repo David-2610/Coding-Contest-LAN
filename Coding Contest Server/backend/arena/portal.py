@@ -210,7 +210,21 @@ def monitor(request,cid):
         rows.append(dict(id=e.pk,name=e.display,username=e.user.username if e.user else "",enrollment=e.enrollment,reconnects=reconnects.get(e.pk,0),missed=max(0,int((now-e.last_seen).total_seconds()//10)-1) if e.last_seen else None,connectedSeconds=max(0,int((e.last_seen-live_since[e.pk]).total_seconds())) if live_since.get(e.pk) and e.last_seen else None,presence=("Unstable" if e.presence=="Online" and e.last_seen and now-e.last_seen>UNSTABLE else e.presence),last=e.last_seen,eligible=e.eligible,submits=counts.get(e.pk,0)))
     events=list(ConnectionEvent.objects.filter(entry__contest=c).order_by("-id").values("id","at","kind","entry__id","entry__display")[:100])
     jobs=[dict(id=j.pk,entry__display=j.entry.display if j.entry else "Unknown",problem__title=j.problem.title if j.problem else "Unknown",language=j.language,verdict=(j.result or {}).get("verdict",j.state)) for j in Job.objects.filter(entry__contest=c,kind__in=["submit","archive"]).select_related("entry","problem").defer("source","cases").order_by("-received")[:30]]
-    return JsonResponse(dict(activeJobs=Job.objects.filter(entry__contest=c,state="running").count(),rows=rows,events=events,scores=scores,jobs=jobs,submissions=sum(counts.values()),problems=list(c.problem_set.values("id","title","published")),final=c.final is not None))
+    import subprocess
+    judge_active = subprocess.run(["systemctl", "--user", "is-active", "--quiet", "coding-contest-pilot-judge"]).returncode == 0
+    queued_count = Job.objects.filter(state="queued").count()
+    return JsonResponse(dict(activeJobs=Job.objects.filter(entry__contest=c,state="running").count(),judgeActive=judge_active,queuedJobs=queued_count,rows=rows,events=events,scores=scores,jobs=jobs,submissions=sum(counts.values()),problems=list(c.problem_set.values("id","title","published")),final=c.final is not None))
+
+@organizer
+@require_POST
+def judge_restart(request):
+    import subprocess, time
+    from .models import Job
+    Job.objects.filter(state="running").update(state="queued")
+    subprocess.run(["systemctl", "--user", "restart", "coding-contest-pilot-judge"], timeout=5)
+    time.sleep(0.5)
+    active = subprocess.run(["systemctl", "--user", "is-active", "--quiet", "coding-contest-pilot-judge"]).returncode == 0
+    return JsonResponse({"ok": True, "active": active, "queued": Job.objects.filter(state="queued").count()})
 
 @organizer
 @require_POST

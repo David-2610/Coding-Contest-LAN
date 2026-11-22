@@ -23,4 +23,16 @@ class Command(BaseCommand):
                         ConnectionEvent.objects.create(entry=entry,kind="Observation gap")
                     else:expire(entry,now)
             previous=now
+
+            # Continuous Judge Worker Watchdog & Self-Healing
+            try:
+                from arena.models import Job
+                import subprocess, os
+                stalled = Job.objects.filter(state="queued", received__lt=now - timedelta(seconds=12)).exists()
+                judge_inactive = subprocess.run(["systemctl", "--user", "is-active", "--quiet", "coding-contest-pilot-judge"]).returncode != 0
+                if stalled or judge_inactive:
+                    subprocess.run(["systemctl", "--user", "restart", "coding-contest-pilot-judge"], timeout=5)
+            except Exception:
+                pass
+
             time.sleep(4)

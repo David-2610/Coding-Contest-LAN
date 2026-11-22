@@ -70,13 +70,15 @@ def action(request,pid,mode):
         return error("Three requests pending. Try again after one finishes.",429)
     cases=p.cases
     if mode=="run":
-        cases=[c for c in cases if c["sample"]]
-        extra=data.get("tests",[])
-        if not isinstance(extra,list) or len(extra)>12: return error("Up to 12 saved tests")
-        for c in extra:
-            if not isinstance(c,dict) or not isinstance(c.get("args"),list) or "expected" not in c: return error("Invalid test")
-            if p.package and (len(c["args"])!=1 or not isinstance(c["args"][0],str) or not isinstance(c["expected"],str)):return error("Expected stdin and stdout strings.")
-            cases.append(dict(args=c["args"],expected=c["expected"],sample=True))
+        extra=data.get("tests")
+        if extra is not None and isinstance(extra,list) and len(extra)>0:
+            if len(extra)>12: return error("Up to 12 custom tests allowed")
+            cases=[]
+            for c in extra:
+                if not isinstance(c,dict) or not isinstance(c.get("args"),list): return error("Invalid test")
+                cases.append(dict(args=c["args"],expected=c.get("expected"),sample=True))
+        else:
+            cases=[c for c in cases if c.get("sample")]
     if not cases: return error("No cases configured")
     job=Job.objects.create(entry=entry,problem=p,language=lang,kind=mode,source=source,token=token,cases=cases,function=p.function,received=now)
     return JsonResponse({"id":job.pk},status=201)
@@ -87,10 +89,13 @@ def result(request,jid):
     result = job.result
     if job.kind == "submit" and result and result.get("cases"):
         first_failure = next((case for case in result["cases"] if case["status"] != "Passed"), None)
-        result = {**result, "cases": [first_failure] if first_failure else []}
-    if result:
-        result={**result,"cases":[row if job.cases[row["number"]-1]["sample"] else
-            {k:row[k] for k in ("number","status")} for row in result["cases"]]}
+        result = {**result, "cases": [first_failure] if first_failure else result["cases"]}
+    if result and result.get("cases"):
+        result={**result,"cases":[
+            row if (job.cases[row["number"]-1].get("sample") or row.get("status") != "Passed") else
+            {k:row[k] for k in ("number","status")}
+            for row in result["cases"]
+        ]}
     return JsonResponse(dict(state=job.state,result=result))
 
 def board(request,cid):

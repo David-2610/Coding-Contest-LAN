@@ -713,6 +713,7 @@ export function Organizer({session}) {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showFetchModal, setShowFetchModal] = useState(false);
   const [refetchingId, setRefetchingId] = useState(null);
+  const [restartingJudge, setRestartingJudge] = useState(false);
 
   const cursor = useRef(null);
 
@@ -821,6 +822,59 @@ export function Organizer({session}) {
 
       {err && <div role="alert" className="alert" style={{background:'#fef2f2', color:'#991b1b', border:'1px solid #fecaca'}}>{err} <button className="link" onClick={() => fail('')}>✕</button></div>}
       {notice && <div role="alert" className="alert" style={{background:'#ecfdf5', color:'#065f46', border:'1px solid #a7f3d0'}}>{notice} <button className="link" onClick={() => notify('')}>Dismiss</button></div>}
+
+      {/* Real-time Judge Worker & Health Status Bar */}
+      <div style={{
+        background: (data?.judgeActive ?? true) ? '#f0fdf4' : '#fef2f2',
+        border: `1px solid ${(data?.judgeActive ?? true) ? '#bbf7d0' : '#fecaca'}`,
+        borderRadius: '10px',
+        padding: '12px 18px',
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: '20px',
+        flexWrap: 'wrap',
+        gap: '12px'
+      }}>
+        <div style={{display:'flex', alignItems:'center', gap:'12px'}}>
+          <span style={{
+            width: '12px',
+            height: '12px',
+            borderRadius: '50%',
+            background: (data?.judgeActive ?? true) ? '#16a34a' : '#dc2626',
+            boxShadow: (data?.judgeActive ?? true) ? '0 0 8px #16a34a' : '0 0 10px #dc2626',
+            display: 'inline-block'
+          }}/>
+          <div>
+            <strong style={{color: (data?.judgeActive ?? true) ? '#166534' : '#991b1b', fontSize:'0.95rem'}}>
+              Judge Worker Engine: {(data?.judgeActive ?? true) ? 'Active & Polling' : 'Down / Stalled (Auto-Healing...)'}
+            </strong>
+            <span style={{color:'#64748b', fontSize:'0.82rem', marginLeft:'12px'}}>
+              {data?.activeJobs || 0} executing · {data?.queuedJobs || 0} queued in queue
+            </span>
+          </div>
+        </div>
+
+        <button 
+          className="secondary"
+          disabled={restartingJudge}
+          onClick={async () => {
+            setRestartingJudge(true);
+            try {
+              const res = await api('/api/organizer/judge/restart', {});
+              notify(res.active ? "Judge Worker restarted and polling!" : "Judge Worker restart command dispatched.");
+              if (cid) api('/api/organizer/' + cid).then(load);
+            } catch(e) {
+              fail("Failed to restart judge: " + e.message);
+            } finally {
+              setRestartingJudge(false);
+            }
+          }}
+          style={{padding:'6px 14px', fontSize:'0.85rem', borderColor:'#cbd5e1'}}
+        >
+          {restartingJudge ? 'Restarting Engine…' : '⚡ Restart Judge Worker'}
+        </button>
+      </div>
 
       {/* Contest Management Overview Section */}
       <section style={{marginBottom:'24px'}}>

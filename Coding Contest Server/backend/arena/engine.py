@@ -66,8 +66,8 @@ def evaluate_cases(job,runner):
                 equal = json.dumps(actual,sort_keys=True)==json.dumps(case["expected"],sort_keys=True)
             status="Passed" if equal else "Wrong answer"
         row={"number":i+1,"status":status}
-        if case.get("sample"):
-            row.update(args=case["args"],expected=case["expected"],actual=actual)
+        if case.get("sample") or status!="Passed":
+            row.update(args=case["args"],expected=case.get("expected"),actual=actual)
         rows.append(row)
         if job.kind=="submit" and status!="Passed":
             break
@@ -80,8 +80,12 @@ def evaluate_cases(job,runner):
                 passed=passed,total=total,skipped=total-len(rows),cases=rows)
 
 def tick():
-    for cid in Contest.objects.filter(stage__in=["automatic","Active","Ended"],ends__lte=timezone.now(),final__isnull=True).values_list("id",flat=True):
-        close_contest(cid)
+    try:
+        for cid in Contest.objects.filter(stage__in=["automatic","Active","Ended"],ends__lte=timezone.now(),final__isnull=True).values_list("id",flat=True):
+            close_contest(cid)
+    except Exception as e:
+        import logging
+        logging.exception("Error checking closed contests: %s", e)
     priority=Case(When(kind="submit",then=Value(0)),When(kind="run",then=Value(1)),default=Value(2),output_field=IntegerField())
     job=Job.objects.filter(state="queued").order_by(priority,"received","id").first()
     if not job:

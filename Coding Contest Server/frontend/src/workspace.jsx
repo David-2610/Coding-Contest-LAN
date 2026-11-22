@@ -38,6 +38,7 @@ function ProblemView({w,p,lang,pickLanguage}){
  const key=[w.entry,w.contest,p.id,lang].join('/'),rev=useRef(p.revision),text=useRef(p.source),synced=useRef(p.source),saving=useRef(false),dirty=useRef(false);
  const [initial,init]=useState(null),[sync,syncStatus]=useState('Saved'),[message,msg]=useState(''),[res,result]=useState(null),[busy,setBusy]=useState(false);
  const [history,showHistory]=useState([]),[descTab,setDescTab]=useState('Description'),[consoleTab,setConsoleTab]=useState('Testcase'),[activeCase,setActiveCase]=useState(0);
+ const [customCases, setCustomCases] = useState(() => (p.samples && p.samples.length > 0) ? JSON.parse(JSON.stringify(p.samples)) : [{args: p.signature?.params ? p.signature.params.map(()=>0) : [0], expected: 0, sample: true}]);
 
  function refreshHistory(){api("/api/problems/"+p.id+"/history").then(d=>showHistory(d.submissions||[])).catch(e=>msg(e.message))}
  useEffect(refreshHistory,[]);
@@ -62,7 +63,8 @@ function ProblemView({w,p,lang,pickLanguage}){
 
  async function run(kind){
   setBusy(true);result(null);msg('Pending…');setConsoleTab('Result');
-  try{const token=Array.from(crypto.getRandomValues(new Uint8Array(18)),v=>v.toString(16).padStart(2,"0")).join("");const payload={source:text.current,token,language:lang};let response;
+  try{const token=Array.from(crypto.getRandomValues(new Uint8Array(18)),v=>v.toString(16).padStart(2,"0")).join("");
+   const payload={source:text.current,token,language:lang,tests:kind==='run'?customCases:undefined};let response;
    response=await api('/api/problems/'+p.id+'/'+kind,payload);
    for(;;){const job=await api('/api/jobs/'+response.id);if(['done','error'].includes(job.state)){result(job.result);msg('');refreshHistory();break}msg(job.state==='queued'?'Queued…':'Judging…');await new Promise(r=>setTimeout(r,450))}
   }catch(e){msg(e.message)}finally{setBusy(false)}
@@ -197,25 +199,77 @@ function ProblemView({w,p,lang,pickLanguage}){
     <div className="lc-console-content">
      {consoleTab==='Testcase' ? (
       <div>
-       {samples.length>0 ? (
-        <>
-         <div className="lc-case-nav">
-          {samples.map((_,idx)=>(
-           <button key={idx} className={'lc-case-btn '+(activeCase===idx?'active':'')} onClick={()=>setActiveCase(idx)}>
-            Case {idx+1}
-           </button>
-          ))}
-         </div>
-         {samples[activeCase] && (
-          <div style={{background:'#f9fafb',padding:'12px',borderRadius:'6px',border:'1px solid #e5e7eb',fontSize:'0.88rem'}}>
-           <div style={{color:'#9ca3af',marginBottom:'4px'}}>Input:</div>
-           <pre style={{margin:'0 0 10px 0',color:'#111827',background:'#ffffff',border:'1px solid #e5e7eb',padding:'8px',borderRadius:'4px'}}>{JSON.stringify(samples[activeCase].args)}</pre>
-           <div style={{color:'#9ca3af',marginBottom:'4px'}}>Expected:</div>
-           <pre style={{margin:0,color:'#d97706',background:'#ffffff',border:'1px solid #e5e7eb',padding:'8px',borderRadius:'4px'}}>{JSON.stringify(samples[activeCase].expected)}</pre>
-          </div>
+       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'10px',flexWrap:'wrap',gap:'8px'}}>
+        <div className="lc-case-nav" style={{margin:0,flexWrap:'wrap',gap:'6px'}}>
+         {customCases.map((_,idx)=>(
+          <button key={idx} className={'lc-case-btn '+(activeCase===idx?'active':'')} onClick={()=>setActiveCase(idx)}>
+           Case {idx+1}
+          </button>
+         ))}
+         {customCases.length < 12 && (
+          <button 
+           className="lc-case-btn" 
+           title="Add new test case"
+           onClick={() => {
+             const defaultArgs = p.signature?.params ? p.signature.params.map(()=>0) : [0];
+             const next = [...customCases, {args: defaultArgs, expected: 0, sample: true}];
+             setCustomCases(next);
+             setActiveCase(next.length - 1);
+           }}
+           style={{fontWeight:700,color:'#2563eb'}}
+          >
+           +
+          </button>
          )}
-        </>
-       ) : <p style={{color:'#888'}}>No sample cases configured.</p>}
+        </div>
+        {customCases.length > 1 && (
+         <button 
+           className="link" 
+           style={{fontSize:'0.8rem',color:'#dc2626',padding:'2px 6px'}}
+           onClick={() => {
+             const next = customCases.filter((_, i) => i !== activeCase);
+             setCustomCases(next);
+             setActiveCase(Math.max(0, activeCase - 1));
+           }}
+         >
+           🗑 Remove Case
+         </button>
+        )}
+       </div>
+
+       {customCases[activeCase] && (
+        <div style={{background:'#f9fafb',padding:'12px',borderRadius:'6px',border:'1px solid #e5e7eb',fontSize:'0.88rem'}}>
+         <div style={{color:'#64748b',fontWeight:600,marginBottom:'4px'}}>Input:</div>
+         <textarea
+           rows={2}
+           value={typeof customCases[activeCase].args === 'string' ? customCases[activeCase].args : JSON.stringify(customCases[activeCase].args.length === 1 ? customCases[activeCase].args[0] : customCases[activeCase].args)}
+           onChange={e => {
+             try {
+               const parsed = JSON.parse(e.target.value);
+               const args = Array.isArray(parsed) && p.signature?.params?.length !== 1 ? parsed : [parsed];
+               const next = [...customCases];
+               next[activeCase] = {...next[activeCase], args};
+               setCustomCases(next);
+             } catch(err) {}
+           }}
+           style={{width:'100%',margin:'0 0 10px 0',color:'#111827',background:'#ffffff',border:'1px solid #cbd5e1',padding:'8px',borderRadius:'4px',fontFamily:'monospace',fontSize:'0.85rem'}}
+         />
+         <div style={{color:'#64748b',fontWeight:600,marginBottom:'4px'}}>Expected Output:</div>
+         <textarea
+           rows={1}
+           value={typeof customCases[activeCase].expected === 'string' ? customCases[activeCase].expected : JSON.stringify(customCases[activeCase].expected)}
+           onChange={e => {
+             try {
+               const expected = JSON.parse(e.target.value);
+               const next = [...customCases];
+               next[activeCase] = {...next[activeCase], expected};
+               setCustomCases(next);
+             } catch(err) {}
+           }}
+           style={{width:'100%',margin:0,color:'#16a34a',background:'#ffffff',border:'1px solid #cbd5e1',padding:'8px',borderRadius:'4px',fontFamily:'monospace',fontSize:'0.85rem'}}
+         />
+        </div>
+       )}
       </div>
      ) : (
       <div>
@@ -233,16 +287,54 @@ function ProblemView({w,p,lang,pickLanguage}){
           </pre>
          )}
          {res.cases && res.cases.map(row=>(
-          <div key={row.number} style={{background:'#f9fafb',padding:'10px',borderRadius:'6px',border:'1px solid #e5e7eb',marginBottom:'8px',fontSize:'0.85rem'}}>
-           <div style={{display:'flex',justifyContent:'space-between',marginBottom:'4px'}}>
-            <strong>Case {row.number}</strong>
-            <span style={{color:row.status==='Passed'?'#2cbb5d':'#ef4444',fontWeight:600}}>{row.status}</span>
+          <div key={row.number} style={{background:'#f9fafb',padding:'12px',borderRadius:'8px',border:row.status==='Passed'?'1px solid #e5e7eb':'1px solid #fecaca',marginBottom:'10px',fontSize:'0.88rem'}}>
+           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'8px'}}>
+            <div>
+             <strong>Case {row.number}</strong>
+             {row.status!=='Passed' && <span style={{marginLeft:'8px',fontSize:'0.75rem',padding:'2px 8px',borderRadius:'4px',background:'#fee2e2',color:'#b91c1c',fontWeight:600}}>Failed Case</span>}
+            </div>
+            <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
+             <span style={{color:row.status==='Passed'?'#16a34a':'#dc2626',fontWeight:700}}>{row.status}</span>
+             {row.args && (
+              <button 
+               className="link" 
+               style={{fontSize:'0.8rem',fontWeight:600,color:'#2563eb',padding:'2px 6px'}}
+               onClick={() => {
+                 const exists = customCases.some(c => JSON.stringify(c.args) === JSON.stringify(row.args));
+                 if (!exists) {
+                   const next = [...customCases, {args: row.args, expected: row.expected, sample: true}];
+                   setCustomCases(next);
+                   setActiveCase(next.length - 1);
+                 } else {
+                   const idx = customCases.findIndex(c => JSON.stringify(c.args) === JSON.stringify(row.args));
+                   if (idx !== -1) setActiveCase(idx);
+                 }
+                 setConsoleTab('Testcase');
+               }}
+              >
+               ➕ Add to Testcases
+              </button>
+             )}
+            </div>
            </div>
            {row.args && (
-            <div style={{color:'#9ca3af',fontSize:'0.82rem'}}>
-             <div>Args: <code>{JSON.stringify(row.args)}</code></div>
-             <div>Expected: <code>{JSON.stringify(row.expected)}</code></div>
-             {row.actual!==undefined && <div>Actual: <code>{JSON.stringify(row.actual)}</code></div>}
+            <div style={{display:'flex',flexDirection:'column',gap:'6px',fontSize:'0.84rem'}}>
+             <div>
+              <span style={{color:'#64748b',fontWeight:600}}>Input:</span>
+              <pre style={{margin:'2px 0 0 0',background:'#fff',padding:'6px 10px',borderRadius:'4px',border:'1px solid #e2e8f0',overflowX:'auto',color:'#0f172a'}}>{JSON.stringify(row.args.length===1?row.args[0]:row.args)}</pre>
+             </div>
+             {row.actual !== undefined && (
+              <div>
+               <span style={{color:'#64748b',fontWeight:600}}>Output:</span>
+               <pre style={{margin:'2px 0 0 0',background:'#fff',padding:'6px 10px',borderRadius:'4px',border:'1px solid #e2e8f0',overflowX:'auto',color:row.status==='Passed'?'#16a34a':'#dc2626'}}>{JSON.stringify(row.actual)}</pre>
+             </div>
+             )}
+             {row.expected !== undefined && (
+              <div>
+               <span style={{color:'#64748b',fontWeight:600}}>Expected:</span>
+               <pre style={{margin:'2px 0 0 0',background:'#fff',padding:'6px 10px',borderRadius:'4px',border:'1px solid #e2e8f0',overflowX:'auto',color:'#16a34a'}}>{JSON.stringify(row.expected)}</pre>
+              </div>
+             )}
             </div>
            )}
           </div>
