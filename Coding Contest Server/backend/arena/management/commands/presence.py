@@ -24,14 +24,21 @@ class Command(BaseCommand):
                     else:expire(entry,now)
             previous=now
 
-            # Continuous Judge Worker Watchdog & Self-Healing
+            # Continuous Multi-Judge Worker Watchdog & Self-Healing
             try:
                 from arena.models import Job
-                import subprocess, os
+                import subprocess
+                from django.conf import settings
                 stalled = Job.objects.filter(state="queued", received__lt=now - timedelta(seconds=12)).exists()
-                judge_inactive = subprocess.run(["systemctl", "--user", "is-active", "--quiet", "coding-contest-pilot-judge"]).returncode != 0
-                if stalled or judge_inactive:
-                    subprocess.run(["systemctl", "--user", "restart", "coding-contest-pilot-judge"], timeout=5)
+                workers_file = settings.DATA / "judge-workers"
+                target_count = 4
+                if workers_file.exists():
+                    try: target_count = int(workers_file.read_text().strip())
+                    except Exception: pass
+                active_count = sum(1 for i in range(1, target_count + 1) if subprocess.run(["systemctl", "--user", "is-active", "--quiet", f"coding-contest-pilot-judge-{i}"]).returncode == 0)
+                if stalled or active_count < target_count:
+                    server_script = settings.BASE / "scripts" / "server"
+                    subprocess.run(["bash", str(server_script), "start"], timeout=8)
             except Exception:
                 pass
 

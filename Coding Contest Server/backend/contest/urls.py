@@ -19,6 +19,6 @@ urlpatterns=[
  path("api/session",portal.session_info),path("api/login",portal.signin),path("api/logout",portal.signout),
  path("api/profile/photo",portal.account_photo),path("api/contests/<int:cid>/enter",portal.enter),path("api/contests/<int:cid>/heartbeat",portal.heartbeat),
  path("api/organizer/<int:cid>",portal.monitor),path("api/organizer/contests",portal.create_contest),path("api/organizer/<int:cid>/delete",portal.delete_contest),path("api/organizer/<int:cid>/problems",portal.author),
- path("api/organizer/jobs/<int:jid>",portal.job_detail),path("api/organizer/judge/restart",portal.judge_restart),path("api/organizer/entries/<int:eid>/eligibility",portal.eligibility),path("api/workspace",views.workspace),
+ path("api/organizer/jobs/<int:jid>",portal.job_detail),path("api/organizer/judge/restart",portal.judge_restart),path("api/organizer/judge/scale",portal.judge_scale),path("api/organizer/judge/status",portal.judge_status),path("api/organizer/entries/<int:eid>/eligibility",portal.eligibility),path("api/workspace",views.workspace),
  path("api/problems/<int:pid>/history",views.history),path("api/problems/<int:pid>/<str:mode>",views.action),path("api/jobs/<int:jid>",views.result),
  path("api/contests/<int:cid>/leaderboard",views.board),path("organizer-export/<int:cid>",views.export)]

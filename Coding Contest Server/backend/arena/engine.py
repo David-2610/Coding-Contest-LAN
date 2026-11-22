@@ -79,26 +79,30 @@ def evaluate_cases(job,runner):
     return dict(verdict=verdict,
                 passed=passed,total=total,skipped=total-len(rows),cases=rows)
 
-def tick():
-    try:
-        for cid in Contest.objects.filter(stage__in=["automatic","Active","Ended"],ends__lte=timezone.now(),final__isnull=True).values_list("id",flat=True):
-            close_contest(cid)
-    except Exception as e:
-        import logging
-        logging.exception("Error checking closed contests: %s", e)
-    priority=Case(When(kind="submit",then=Value(0)),When(kind="run",then=Value(1)),default=Value(2),output_field=IntegerField())
-    job=Job.objects.filter(state="queued").order_by(priority,"received","id").first()
-    if not job:
-        return False
-    job.state="running"
-    job.save(update_fields=["state"])
+def tick(worker_id=1):
+    if worker_id == 1:
+        try:
+            for cid in Contest.objects.filter(stage__in=["automatic","Active","Ended"],ends__lte=timezone.now(),final__isnull=True).values_list("id",flat=True):
+                close_contest(cid)
+        except Exception as e:
+            import logging
+            logging.exception("Error checking closed contests: %s", e)
+
+    with transaction.atomic():
+        priority=Case(When(kind="submit",then=Value(0)),When(kind="run",then=Value(1)),default=Value(2),output_field=IntegerField())
+        job=Job.objects.select_for_update(skip_locked=True).filter(state="queued").order_by(priority,"received","id").first()
+        if not job:
+            return False
+        job.state="running"
+        job.save(update_fields=["state"])
+
     try:
         job.result=evaluate(job)
         job.state="done"
-    except Exception:
+    except Exception as e:
         import logging
-        logging.exception("Judge infrastructure error for job %s",job.pk)
+        logging.exception("Judge infrastructure error for job %s: %s", job.pk, e)
         job.state="error"
-        job.result={"verdict":"Judge unavailable","cases":[]}
+        job.result={"verdict":"Judge unavailable","cases":[],"diagnostic":str(e)}
     job.save(update_fields=["state","result"])
     return True

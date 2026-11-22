@@ -3,18 +3,39 @@ set -eu
 cd "$(dirname "$0")/.."
 project=$PWD
 web=coding-contest-pilot-web
-worker=coding-contest-pilot-judge
 db=coding-contest-pilot-db
 runtime="$project/var/maria-runtime/usr"
 libs="$runtime/lib/x86_64-linux-gnu"
+workers_file="$project/var/judge-workers"
+workers_count=$(cat "$workers_file" 2>/dev/null || echo 4)
+
+start_worker() {
+  local slot=$1
+  local unit="coding-contest-pilot-judge-$slot"
+  if ! systemctl --user is-active --quiet "$unit"; then
+    systemd-run --user --quiet --collect --setenv="LD_LIBRARY_PATH=$libs" \
+      --unit="$unit" --working-directory="$project" \
+      -p UMask=0077 -p Restart=always -p RestartSec=1s -p StartLimitIntervalSec=0 \
+      -- "$project/.venv/bin/python" manage.py worker --slot="$slot"
+  fi
+}
+
+stop_worker() {
+  local slot=$1
+  local unit="coding-contest-pilot-judge-$slot"
+  if systemctl --user is-active --quiet "$unit"; then
+    systemctl --user stop "$unit" || true
+  fi
+}
+
 case "${1:-status}" in
   start)
     if [ -f var/db-key ] && ! systemctl --user is-active --quiet "$db"; then
-      systemd-run --user --quiet --collect --unit="$db" --working-directory="$project" --setenv="LD_LIBRARY_PATH=$libs" -p UMask=0077 -p Restart=on-failure -- "$runtime/sbin/mariadbd" --no-defaults --basedir="$runtime" --datadir="$project/var/maria-data" --socket="$project/var/mysql.sock" --pid-file="$project/var/mysql.pid" --skip-networking --innodb-buffer-pool-size=96M --max-connections=24
+      systemd-run --user --quiet --collect --unit="$db" --working-directory="$project" --setenv="LD_LIBRARY_PATH=$libs" -p UMask=0077 -p Restart=on-failure -- "$runtime/sbin/mariadbd" --no-defaults --basedir="$runtime" --datadir="$project/var/maria-data" --socket="$project/var/mysql.sock" --pid-file="$project/var/mysql.pid" --skip-networking --innodb-buffer-pool-size=96M --max-connections=48
     fi
-    if ! systemctl --user is-active --quiet "$worker"; then
-      systemd-run --user --quiet --collect --setenv="LD_LIBRARY_PATH=$libs" --unit="$worker" --working-directory="$project" -p UMask=0077 -p Restart=always -p RestartSec=1s -p StartLimitIntervalSec=0 -- "$project/.venv/bin/python" manage.py worker
-    fi
+    for i in $(seq 1 "$workers_count"); do
+      start_worker "$i"
+    done
     if ! systemctl --user is-active --quiet coding-contest-pilot-presence; then
       systemd-run --user --quiet --collect --setenv="LD_LIBRARY_PATH=$libs" --unit=coding-contest-pilot-presence --working-directory="$project" -p UMask=0077 -p Restart=on-failure -p RestartSec=2s -- "$project/.venv/bin/python" manage.py presence
     fi
@@ -22,12 +43,50 @@ case "${1:-status}" in
       systemd-run --user --quiet --collect --setenv="LD_LIBRARY_PATH=$libs" --unit="$web" --working-directory="$project" -p UMask=0077 -p Restart=on-failure -p RestartSec=2s -- "$project/.venv/bin/python" -m gunicorn --bind 127.0.0.1:8765 --workers 2 contest.wsgi:application
     fi
     ;;
-  restart)
-    systemctl --user restart "$web" "$worker" coding-contest-pilot-presence
-    echo "Web, judge, and presence restarted."
+  scale)
+    target=${2:-4}
+    if [ "$target" -lt 1 ] || [ "$target" -gt 12 ]; then
+      echo "Workers count must be between 1 and 12" >&2
+      exit 1
+    fi
+    echo "$target" > "$workers_file"
+    for i in $(seq 1 "$target"); do
+      start_worker "$i"
+    done
+    for i in $(seq $((target + 1)) 12); do
+      stop_worker "$i"
+    done
+    echo "Scaled judge workers to $target"
     ;;
-  stop) systemctl --user stop "$web" "$worker" coding-contest-pilot-presence
-    if systemctl --user is-active --quiet "$db"; then systemctl --user stop "$db"; fi ;;
-  status) systemctl --user is-active "$web" "$worker" "$db" coding-contest-pilot-presence ;;
-  *) echo 'Usage: scripts/server start|stop|status' >&2; exit 2 ;;
+  restart)
+    systemctl --user restart "$web" coding-contest-pilot-presence || true
+    for i in $(seq 1 12); do
+      stop_worker "$i"
+    done
+    sleep 0.5
+    for i in $(seq 1 "$workers_count"); do
+      start_worker "$i"
+    done
+    echo "Web, presence, and $workers_count judge workers restarted."
+    ;;
+  stop)
+    systemctl --user stop "$web" coding-contest-pilot-presence || true
+    for i in $(seq 1 12); do
+      stop_worker "$i"
+    done
+    if systemctl --user is-active --quiet "$db"; then systemctl --user stop "$db"; fi
+    ;;
+  status)
+    active_workers=0
+    for i in $(seq 1 "$workers_count"); do
+      if systemctl --user is-active --quiet "coding-contest-pilot-judge-$i"; then
+        active_workers=$((active_workers + 1))
+      fi
+    done
+    echo "Web: $(systemctl --user is-active "$web" 2>/dev/null || echo inactive)"
+    echo "DB: $(systemctl --user is-active "$db" 2>/dev/null || echo inactive)"
+    echo "Presence: $(systemctl --user is-active coding-contest-pilot-presence 2>/dev/null || echo inactive)"
+    echo "Judges: $active_workers/$workers_count active"
+    ;;
+  *) echo 'Usage: scripts/server start|stop|restart|scale <N>|status' >&2; exit 2 ;;
 esac

@@ -823,57 +823,157 @@ export function Organizer({session}) {
       {err && <div role="alert" className="alert" style={{background:'#fef2f2', color:'#991b1b', border:'1px solid #fecaca'}}>{err} <button className="link" onClick={() => fail('')}>✕</button></div>}
       {notice && <div role="alert" className="alert" style={{background:'#ecfdf5', color:'#065f46', border:'1px solid #a7f3d0'}}>{notice} <button className="link" onClick={() => notify('')}>Dismiss</button></div>}
 
-      {/* Real-time Judge Worker & Health Status Bar */}
+      {/* Real-time Multi-Judge Cluster & Scaler Control */}
       <div style={{
-        background: (data?.judgeActive ?? true) ? '#f0fdf4' : '#fef2f2',
-        border: `1px solid ${(data?.judgeActive ?? true) ? '#bbf7d0' : '#fecaca'}`,
-        borderRadius: '10px',
-        padding: '12px 18px',
+        background: '#ffffff',
+        border: '1px solid #e2e8f0',
+        borderRadius: '12px',
+        padding: '16px 20px',
+        marginBottom: '22px',
+        boxShadow: '0 1px 4px rgba(0,0,0,0.03)',
         display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: '20px',
-        flexWrap: 'wrap',
+        flexDirection: 'column',
         gap: '12px'
       }}>
-        <div style={{display:'flex', alignItems:'center', gap:'12px'}}>
-          <span style={{
-            width: '12px',
-            height: '12px',
-            borderRadius: '50%',
-            background: (data?.judgeActive ?? true) ? '#16a34a' : '#dc2626',
-            boxShadow: (data?.judgeActive ?? true) ? '0 0 8px #16a34a' : '0 0 10px #dc2626',
-            display: 'inline-block'
-          }}/>
-          <div>
-            <strong style={{color: (data?.judgeActive ?? true) ? '#166534' : '#991b1b', fontSize:'0.95rem'}}>
-              Judge Worker Engine: {(data?.judgeActive ?? true) ? 'Active & Polling' : 'Down / Stalled (Auto-Healing...)'}
-            </strong>
-            <span style={{color:'#64748b', fontSize:'0.82rem', marginLeft:'12px'}}>
-              {data?.activeJobs || 0} executing · {data?.queuedJobs || 0} queued in queue
+        <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:'12px'}}>
+          <div style={{display:'flex', alignItems:'center', gap:'12px'}}>
+            <span style={{
+              width: '12px',
+              height: '12px',
+              borderRadius: '50%',
+              background: (data?.judge?.active || 0) > 0 ? '#16a34a' : '#dc2626',
+              boxShadow: (data?.judge?.active || 0) > 0 ? '0 0 10px #16a34a' : '0 0 10px #dc2626',
+              display: 'inline-block'
+            }}/>
+            <div>
+              <strong style={{fontSize:'1.05rem', color:'#1e293b'}}>
+                Parallel Judge Cluster: {data?.judge?.active || 0} / {data?.judge?.target || 4} Active
+              </strong>
+              <span style={{fontSize:'0.85rem', color:'#64748b', marginLeft:'12px'}}>
+                16 vCPU Architecture · Parallel non-blocking execution
+              </span>
+            </div>
+          </div>
+
+          {/* Queue & Executing Metrics */}
+          <div style={{display:'flex', gap:'10px', alignItems:'center', flexWrap:'wrap'}}>
+            <span style={{
+              padding:'4px 12px',
+              borderRadius:'20px',
+              fontSize:'0.84rem',
+              fontWeight:600,
+              background: (data?.queuedJobs || 0) > 0 ? '#fef3c7' : '#ecfdf5',
+              color: (data?.queuedJobs || 0) > 0 ? '#b45309' : '#047857',
+              border: `1px solid ${(data?.queuedJobs || 0) > 0 ? '#fde68a' : '#a7f3d0'}`
+            }}>
+              📥 In Queue: <strong>{data?.queuedJobs || 0}</strong>
             </span>
+            <span style={{
+              padding:'4px 12px',
+              borderRadius:'20px',
+              fontSize:'0.84rem',
+              fontWeight:600,
+              background:'#e0e7ff',
+              color:'#3730a3',
+              border:'1px solid #c7d2fe'
+            }}>
+              ⚡ Executing: <strong>{data?.activeJobs || 0}</strong>
+            </span>
+            <button 
+              className="secondary"
+              disabled={restartingJudge}
+              onClick={async () => {
+                setRestartingJudge(true);
+                try {
+                  await api('/api/organizer/judge/restart', {});
+                  notify("All judge workers restarted and polling!");
+                  if (cid) api('/api/organizer/' + cid).then(load);
+                } catch(e) {
+                  fail("Failed to restart judges: " + e.message);
+                } finally {
+                  setRestartingJudge(false);
+                }
+              }}
+              style={{padding:'5px 12px', fontSize:'0.82rem', borderColor:'#cbd5e1'}}
+            >
+              {restartingJudge ? 'Restarting…' : '🔄 Restart All Judges'}
+            </button>
           </div>
         </div>
 
-        <button 
-          className="secondary"
-          disabled={restartingJudge}
-          onClick={async () => {
-            setRestartingJudge(true);
-            try {
-              const res = await api('/api/organizer/judge/restart', {});
-              notify(res.active ? "Judge Worker restarted and polling!" : "Judge Worker restart command dispatched.");
-              if (cid) api('/api/organizer/' + cid).then(load);
-            } catch(e) {
-              fail("Failed to restart judge: " + e.message);
-            } finally {
-              setRestartingJudge(false);
-            }
-          }}
-          style={{padding:'6px 14px', fontSize:'0.85rem', borderColor:'#cbd5e1'}}
-        >
-          {restartingJudge ? 'Restarting Engine…' : '⚡ Restart Judge Worker'}
-        </button>
+        {/* Scaler and Slot Badges */}
+        <div style={{
+          display:'flex',
+          justifyContent:'space-between',
+          alignItems:'center',
+          flexWrap:'wrap',
+          gap:'12px',
+          borderTop:'1px solid #f1f5f9',
+          paddingTop:'12px'
+        }}>
+          {/* Individual Slot Indicators */}
+          <div style={{display:'flex', gap:'8px', alignItems:'center', flexWrap:'wrap'}}>
+            <span style={{fontSize:'0.8rem', color:'#64748b', fontWeight:600}}>Slots:</span>
+            {(data?.judge?.slots || []).map(s => (
+              <span 
+                key={s.slot}
+                style={{
+                  fontSize:'0.75rem',
+                  fontWeight:600,
+                  padding:'2px 8px',
+                  borderRadius:'6px',
+                  background: s.active ? '#ecfdf5' : '#fef2f2',
+                  color: s.active ? '#065f46' : '#991b1b',
+                  border: `1px solid ${s.active ? '#a7f3d0' : '#fecaca'}`,
+                  display:'inline-flex',
+                  alignItems:'center',
+                  gap:'4px'
+                }}
+              >
+                <span style={{width:'6px', height:'6px', borderRadius:'50%', background: s.active ? '#10b981' : '#ef4444'}}/>
+                Judge #{s.slot}
+              </span>
+            ))}
+          </div>
+
+          {/* Scale Buttons */}
+          <div style={{display:'flex', alignItems:'center', gap:'8px'}}>
+            <span style={{fontSize:'0.8rem', color:'#64748b', fontWeight:600}}>Scale Workers:</span>
+            {[1, 2, 4, 6, 8].map(n => {
+              const isCurrent = (data?.judge?.target || 4) === n;
+              return (
+                <button
+                  key={n}
+                  disabled={restartingJudge}
+                  onClick={async () => {
+                    setRestartingJudge(true);
+                    try {
+                      await api('/api/organizer/judge/scale', {count: n});
+                      notify(`Scaled judge cluster to ${n} parallel workers!`);
+                      if (cid) api('/api/organizer/' + cid).then(load);
+                    } catch(e) {
+                      fail("Failed to scale: " + e.message);
+                    } finally {
+                      setRestartingJudge(false);
+                    }
+                  }}
+                  style={{
+                    padding:'3px 10px',
+                    fontSize:'0.78rem',
+                    borderRadius:'6px',
+                    background: isCurrent ? '#7c3aed' : '#f1f5f9',
+                    color: isCurrent ? '#fff' : '#475569',
+                    border: isCurrent ? '1px solid #7c3aed' : '1px solid #e2e8f0',
+                    cursor:'pointer',
+                    fontWeight: isCurrent ? 700 : 500
+                  }}
+                >
+                  {n} {n === 1 ? 'Judge' : 'Judges'}
+                </button>
+              );
+            })}
+          </div>
+        </div>
       </div>
 
       {/* Contest Management Overview Section */}

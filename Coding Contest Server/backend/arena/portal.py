@@ -211,20 +211,71 @@ def monitor(request,cid):
     events=list(ConnectionEvent.objects.filter(entry__contest=c).order_by("-id").values("id","at","kind","entry__id","entry__display")[:100])
     jobs=[dict(id=j.pk,entry__display=j.entry.display if j.entry else "Unknown",problem__title=j.problem.title if j.problem else "Unknown",language=j.language,verdict=(j.result or {}).get("verdict",j.state)) for j in Job.objects.filter(entry__contest=c,kind__in=["submit","archive"]).select_related("entry","problem").defer("source","cases").order_by("-received")[:30]]
     import subprocess
-    judge_active = subprocess.run(["systemctl", "--user", "is-active", "--quiet", "coding-contest-pilot-judge"]).returncode == 0
+    from django.conf import settings
+    workers_file = settings.DATA / "judge-workers"
+    target_count = 4
+    if workers_file.exists():
+        try: target_count = int(workers_file.read_text().strip())
+        except Exception: pass
+    slots = []
+    active_count = 0
+    for i in range(1, target_count + 1):
+        is_up = subprocess.run(["systemctl", "--user", "is-active", "--quiet", f"coding-contest-pilot-judge-{i}"]).returncode == 0
+        slots.append({"slot": i, "active": is_up})
+        if is_up: active_count += 1
     queued_count = Job.objects.filter(state="queued").count()
-    return JsonResponse(dict(activeJobs=Job.objects.filter(entry__contest=c,state="running").count(),judgeActive=judge_active,queuedJobs=queued_count,rows=rows,events=events,scores=scores,jobs=jobs,submissions=sum(counts.values()),problems=list(c.problem_set.values("id","title","published")),final=c.final is not None))
+    judge_info = {"target": target_count, "active": active_count, "slots": slots}
+    return JsonResponse(dict(activeJobs=Job.objects.filter(entry__contest=c,state="running").count(),judge=judge_info,judgeActive=active_count>0,queuedJobs=queued_count,rows=rows,events=events,scores=scores,jobs=jobs,submissions=sum(counts.values()),problems=list(c.problem_set.values("id","title","published")),final=c.final is not None))
+
+@organizer
+@require_POST
+def judge_scale(request):
+    try:
+        data = json.loads(request.body.decode() if request.body else "{}")
+    except Exception:
+        data = request.POST.dict()
+    target = int(data.get("count") or data.get("workers") or 4)
+    target = max(1, min(12, target))
+    from django.conf import settings
+    import subprocess
+    server_script = settings.BASE / "scripts" / "server"
+    subprocess.run(["bash", str(server_script), "scale", str(target)], timeout=12)
+    return JsonResponse({"ok": True, "target": target})
 
 @organizer
 @require_POST
 def judge_restart(request):
-    import subprocess, time
+    import subprocess
+    from django.conf import settings
     from .models import Job
     Job.objects.filter(state="running").update(state="queued")
-    subprocess.run(["systemctl", "--user", "restart", "coding-contest-pilot-judge"], timeout=5)
-    time.sleep(0.5)
-    active = subprocess.run(["systemctl", "--user", "is-active", "--quiet", "coding-contest-pilot-judge"]).returncode == 0
-    return JsonResponse({"ok": True, "active": active, "queued": Job.objects.filter(state="queued").count()})
+    server_script = settings.BASE / "scripts" / "server"
+    subprocess.run(["bash", str(server_script), "restart"], timeout=12)
+    return JsonResponse({"ok": True})
+
+@organizer
+def judge_status(request):
+    from django.conf import settings
+    import subprocess
+    from .models import Job
+    workers_file = settings.DATA / "judge-workers"
+    target_count = 4
+    if workers_file.exists():
+        try: target_count = int(workers_file.read_text().strip())
+        except Exception: pass
+    slots = []
+    active_count = 0
+    for i in range(1, target_count + 1):
+        is_up = subprocess.run(["systemctl", "--user", "is-active", "--quiet", f"coding-contest-pilot-judge-{i}"]).returncode == 0
+        slots.append({"slot": i, "active": is_up})
+        if is_up: active_count += 1
+    return JsonResponse({
+        "target": target_count,
+        "active": active_count,
+        "slots": slots,
+        "queued": Job.objects.filter(state="queued").count(),
+        "running": Job.objects.filter(state="running").count()
+    })
 
 @organizer
 @require_POST
