@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Stop Contest LAN
+Comment=Stop CodeClash Wi-Fi Hotspot and Restore Network
+Exec="/home/intercom/Launchpad/Coding Contest LAN/Stop LAN"
+Icon=/home/intercom/Launchpad/Coding Contest LAN/Coding Contest Server/frontend/dist/ecode.jpg
+Terminal=true
+Categories=Network;

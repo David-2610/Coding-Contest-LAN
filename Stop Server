@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ ! -t 0 && -n ${DISPLAY:-} && ${1:-} != --terminal ]]; then
+    exec x-terminal-emulator -e "$0" --terminal
+fi
+
+echo "=================================================="
+echo "      Stopping CodeClash Contest Server           "
+echo "=================================================="
+project=$(cd -- "$(dirname -- "$0")" && pwd)
+cd "$project/Coding Contest Server/backend"
+export LD_LIBRARY_PATH="$PWD/var/maria-runtime/usr/lib/x86_64-linux-gnu"
+
+echo "[1/2] Stopping Web server, Presence, Judge workers, and Database..."
+scripts/server stop
+
+echo "[2/2] Checking service status..."
+scripts/server status
+
+echo "--------------------------------------------------"
+echo "🛑 CodeClash Contest Server stopped successfully."
+echo "--------------------------------------------------"
+if [[ -t 0 ]]; then
+    read -rp "Press Enter to close."
+fi

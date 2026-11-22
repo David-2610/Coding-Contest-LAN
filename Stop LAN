@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ ! -t 0 && -n ${DISPLAY:-} && ${1:-} != --terminal ]]; then
+    exec x-terminal-emulator -e "$0" --terminal
+fi
+
+echo "=================================================="
+echo "      Stopping Contest LAN & Wi-Fi Hotspot        "
+echo "=================================================="
+echo "Requesting sudo privileges to stop network services..."
+sudo -v
+
+echo "[1/2] Stopping contest LAN network & restoring Wi-Fi / network interfaces..."
+sudo contest-lan stop || true
+sleep 1
+
+echo "[2/2] Restoring local DNS settings..."
+sudo resolvectl revert contestbr0 2>/dev/null || true
+
+echo "--------------------------------------------------"
+echo "🛑 Contest LAN & Wi-Fi Hotspot stopped successfully."
+echo "   Standard Wi-Fi and network connectivity restored."
+echo "--------------------------------------------------"
+if [[ -t 0 ]]; then
+    read -rp "Press Enter to close."
+fi
