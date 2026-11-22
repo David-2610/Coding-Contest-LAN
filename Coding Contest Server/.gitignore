@@ -1,0 +1,29 @@
+# ==============================================================================
+# Coding Contest Server — Specific Ignore Rules
+# ==============================================================================
+
+# Private local runtime, MariaDB, keys and SQLite files
+backend/var/
+var/
+*.key
+*.sqlite3
+*.pid
+*.sock
+*.log
+
+# Python virtual environment & bytecode
+backend/.venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Node modules
+frontend/node_modules/
+node_modules/
+
+# Exports & payloads containing participant submissions or sensitive info
+sync-payload*.json
+contest-*-final.json
+*.env
+.env*
+!.env.example

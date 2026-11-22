@@ -1,0 +1,265 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CodeClash 1.0 question",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "id": {
+      "type": "string",
+      "maxLength": 48000,
+      "pattern": "^[A-Za-z0-9_-]{1,64}$"
+    },
+    "title": {
+      "type": "string",
+      "maxLength": 120,
+      "minLength": 1
+    },
+    "difficulty": {
+      "enum": [
+        "Easy",
+        "Medium",
+        "Hard"
+      ]
+    },
+    "topics": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 48000
+      },
+      "minItems": 1,
+      "maxItems": 100
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 48000
+    },
+    "inputFormat": {
+      "type": "string",
+      "maxLength": 48000
+    },
+    "outputFormat": {
+      "type": "string",
+      "maxLength": 48000
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 48000
+      },
+      "minItems": 1,
+      "maxItems": 100
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "type": "string",
+            "maxLength": 48000
+          },
+          "output": {
+            "type": "string",
+            "maxLength": 48000
+          },
+          "explanation": {
+            "type": "string",
+            "maxLength": 48000
+          }
+        },
+        "required": [
+          "input",
+          "output",
+          "explanation"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "maxItems": 100
+    },
+    "testCases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 48000
+          },
+          "input": {
+            "type": "string",
+            "maxLength": 48000
+          },
+          "expectedOutput": {
+            "type": "string",
+            "maxLength": 48000
+          },
+          "visibility": {
+            "enum": [
+              "public",
+              "hidden"
+            ]
+          },
+          "weight": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          }
+        },
+        "required": [
+          "id",
+          "input",
+          "expectedOutput",
+          "visibility",
+          "weight"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "maxItems": 100
+    },
+    "execution": {
+      "type": "object",
+      "properties": {
+        "timeLimitMs": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 10000
+        },
+        "memoryLimitMB": {
+          "type": "integer",
+          "minimum": 32,
+          "maximum": 512
+        },
+        "outputComparison": {
+          "const": "trimTrailingWhitespace"
+        }
+      },
+      "required": [
+        "timeLimitMs",
+        "memoryLimitMB",
+        "outputComparison"
+      ],
+      "additionalProperties": false
+    },
+    "scoring": {
+      "type": "object",
+      "properties": {
+        "maxScore": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000
+        },
+        "method": {
+          "const": "allOrNothing"
+        }
+      },
+      "required": [
+        "maxScore",
+        "method"
+      ],
+      "additionalProperties": false
+    },
+    "languages": {
+      "type": "object",
+      "properties": {
+        "cpp17": {
+          "type": "object",
+          "properties": {
+            "displayName": {
+              "type": "string",
+              "maxLength": 48000
+            },
+            "fileName": {
+              "type": "string",
+              "maxLength": 48000
+            },
+            "starterCode": {
+              "type": "string",
+              "maxLength": 48000
+            }
+          },
+          "required": [
+            "displayName",
+            "fileName",
+            "starterCode"
+          ],
+          "additionalProperties": false
+        },
+        "python3": {
+          "type": "object",
+          "properties": {
+            "displayName": {
+              "type": "string",
+              "maxLength": 48000
+            },
+            "fileName": {
+              "type": "string",
+              "maxLength": 48000
+            },
+            "starterCode": {
+              "type": "string",
+              "maxLength": 48000
+            }
+          },
+          "required": [
+            "displayName",
+            "fileName",
+            "starterCode"
+          ],
+          "additionalProperties": false
+        },
+        "java21": {
+          "type": "object",
+          "properties": {
+            "displayName": {
+              "type": "string",
+              "maxLength": 48000
+            },
+            "fileName": {
+              "type": "string",
+              "maxLength": 48000
+            },
+            "starterCode": {
+              "type": "string",
+              "maxLength": 48000
+            }
+          },
+          "required": [
+            "displayName",
+            "fileName",
+            "starterCode"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "cpp17",
+        "python3",
+        "java21"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "id",
+    "title",
+    "difficulty",
+    "topics",
+    "description",
+    "inputFormat",
+    "outputFormat",
+    "constraints",
+    "examples",
+    "testCases",
+    "execution",
+    "scoring",
+    "languages"
+  ],
+  "additionalProperties": false
+}

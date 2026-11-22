@@ -1,0 +1,303 @@
+#!/usr/bin/python3
+import argparse
+import datetime
+import fcntl
+import ipaddress
+import json
+import os
+from pathlib import Path
+import re
+import secrets
+import shutil
+import socket
+import struct
+import subprocess
+import sys
+import time
+from urllib.request import build_opener, ProxyHandler
+
+BASE = Path(__file__).resolve().parent
+ROOT = Path("/var/lib/contest-lan")
+STATE = ROOT / "active.json"
+WIFI = "wlp63s0"
+AP = "contestap0"
+BRIDGE = "contestbr0"
+NM_CONF = Path("/run/NetworkManager/conf.d/91-contest-lan.conf")
+NET = ipaddress.ip_network("10.50.0.0/24")
+ADDR = "10.50.0.1/24"
+UNITS = ["contest-lan-ap", "contest-lan-dns", "contest-lan-page"]
+TIMER = "contest-lan-rollback"
+os.environ.update(LC_ALL="C", PATH="/usr/sbin:/usr/bin:/sbin:/bin")
+
+def run(*args, check=True):
+    p = subprocess.run(args, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=50)
+    if check and p.returncode:
+        raise RuntimeError(f"{args[0]} {args[1]}: {p.stderr.strip() or p.stdout.strip()}")
+    return p.stdout.strip()
+
+def nm(field):
+    return run("nmcli", "-g", field, "device", "show", WIFI)
+
+def loaded(unit):
+    return run("systemctl", "show", "-p", "LoadState", "--value", unit) not in ("not-found", "")
+
+def save(path, data):
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2) + "\n")
+    tmp.replace(path)
+
+def usb_radio():
+    for dev in Path("/sys/class/net").iterdir():
+        origin = (dev / "device").resolve()
+        for ancestor in origin.parents:
+            try:
+                ids = [(ancestor / key).read_text().strip() for key in ("idVendor", "idProduct")]
+            except FileNotFoundError:
+                continue
+            if ids == ["0bda","818b"]:
+                return dev.name
+            break
+    raise RuntimeError("Plug in the ProDot USB adapter")
+
+def table_names():
+    return set(run("nft","list","tables").splitlines())
+
+def snapshot():
+    for tool in ("nmcli","iw","ip","systemd-run","systemctl","hostapd","hostapd_cli","dnsmasq","nft","ss"):
+        if not shutil.which(tool):
+            raise RuntimeError(f"Missing {tool}")
+    if STATE.exists():
+        raise RuntimeError("An active or interrupted rollout exists. Use status or recover.")
+    links = json.loads(run("ip","-j","link","show","dev",WIFI))
+    info = run("iw","dev",WIFI,"info")
+    phy = re.search(r"wiphy (\d+)", info)
+    caps = run("iw","phy","phy"+phy[1],"info") if phy else ""
+    combos = caps.partition("valid interface combinations:")[2]
+    if not any("managed" in line and re.search(r"\bAP\b",line) and "#channels" in line
+               for line in re.split(r"\n\s*\* ",combos)):
+        raise RuntimeError("Radio does not advertise simultaneous station and AP support")
+    if "type managed" not in info or "master" in links[0] or nm("GENERAL.STATE").split()[0] != "100":
+        raise RuntimeError("Connect the laptop to the mobile hotspot before starting")
+    match = re.search(r"channel (\d+) \((\d+) MHz\)", info)
+    if not match:
+        raise RuntimeError("Cannot identify the hotspot channel")
+    channel, frequency = map(int, match.groups())
+    freq_line = next((line for line in caps.splitlines() if f"MHz [{channel}]" in line and str(frequency) in line), "")
+    if not freq_line or any(flag in freq_line.lower() for flag in ("disabled", "no ir", "radar")) or frequency >= 5900:
+        raise RuntimeError("Hotspot channel unavailable for a concurrent AP. Select a supported hotspot band/channel.")
+    if frequency < 5000:
+        raise RuntimeError("Connect the built-in Wi-Fi to a 5 GHz mobile hotspot")
+    usb = usb_radio()
+    usb_info = run("iw","dev",usb,"info")
+    usb_phy = "phy"+re.search(r"wiphy (\d+)",usb_info)[1]
+    usb_caps = run("iw","phy",usb_phy,"info")
+    usb_channel = next((line for line in usb_caps.splitlines() if "MHz [6]" in line), "")
+    if usb_phy == "phy"+phy[1] or not re.search(r"^\s*\* AP\s*$",usb_caps,re.M) or not usb_channel or any(x in usb_channel.lower() for x in ("disabled","no ir")):
+        raise RuntimeError("The USB radio cannot host channel 6")
+    if "type managed" not in usb_info or run("nmcli","-g","GENERAL.STATE","device","show",usb).split()[0] != "30":
+        raise RuntimeError("ProDot must be disconnected and managed by NetworkManager")
+    if any(Path("/sys/class/net",name).exists() for name in (AP,BRIDGE)) or NM_CONF.exists():
+        raise RuntimeError("Contest AP interface or runtime NetworkManager config already exists")
+    routes = json.loads(run("ip","-j","-4","route","show","table","all"))
+    for r in routes:
+        if r.get("dst","default") != "default" and ipaddress.ip_network(r["dst"], strict=False).overlaps(NET):
+            raise RuntimeError("Route overlaps contest subnet: "+str(r))
+    for unit in UNITS + [TIMER+".timer", TIMER+".service"]:
+        if loaded(unit):
+            raise RuntimeError("Unit already exists: "+unit)
+    if table_names() & {"table inet contest_lan","table bridge contest_lan"}:
+        raise RuntimeError("Contest nft table already exists")
+    run("nft","-c","-f",str(BASE/"firewall.nft"))
+    run("dnsmasq","--test","--conf-file="+str(BASE/"dnsmasq.conf"))
+    return dict(version=3, usb=usb, phy="phy"+phy[1], channel=channel, mode="g" if frequency < 3000 else "a", uuid=nm("GENERAL.CON-UUID"), up="UP" in links[0]["flags"],
+                addresses=json.loads(run("ip","-j","addr","show","dev",WIFI)),
+                routes=routes, wifi_info=info, listeners=run("ss","-lntu"),
+                boot=Path("/proc/sys/kernel/random/boot_id").read_text().strip())
+
+def stop_unit(unit):
+    if loaded(unit):
+        run("systemctl","stop",unit)
+
+def recover():
+    if not STATE.exists():
+        print("Stopped")
+        return
+    s = json.loads(STATE.read_text())
+    if s.get("version") != 3:
+        raise RuntimeError("Use the original installed CLI to recover the earlier rollout first")
+    # Keep the firewall in place until the AP and contest address are gone.
+    for unit in UNITS:
+        stop_unit(unit)
+    if s.get("ap_requested") and Path("/sys/class/net",AP).exists():
+        run("iw","dev",AP,"del")
+    usb = s["usb"]
+    if s.get("radio_requested") and Path("/sys/class/net",usb).exists():
+        if "type AP" in run("iw","dev",usb,"info"):
+            run("ip","link","set",usb,"down")
+            run("iw","dev",usb,"set","type","managed")
+    if s.get("bridge_requested") and Path("/sys/class/net",BRIDGE).exists():
+        run("ip","link","del",BRIDGE,"type","bridge")
+    for family in ("bridge","inet"):
+        if f"table {family} contest_lan" in table_names():
+            run("nft","delete","table",family,"contest_lan")
+    if s.get("nm_requested"):
+        NM_CONF.unlink(missing_ok=True)
+        run("nmcli","general","reload","conf")
+    if s.get("usb_management_requested") and Path("/sys/class/net",usb).exists():
+        run("nmcli","device","set",usb,"managed","yes")
+    stop_unit(TIMER+".timer")
+    STATE.unlink()
+    print("Stopped contest AP. Snapshot:", s["backup"])
+
+def launch(unit, command, *props):
+    run("systemd-run","--quiet","--collect","--unit",unit,"--property=Type=exec",
+        *["--property="+p for p in props],"--",*command)
+
+def check_live():
+    for unit in UNITS:
+        run("systemctl","is-active",unit)
+    state = json.loads(STATE.read_text())
+    for iface, expected_freq in ((AP,5000 + 5*state["channel"]), (state["usb"],2437)):
+        status = run("hostapd_cli","-p","/run/contest-lan-ap","-i",iface,"status").splitlines()
+        if "state=ENABLED" not in status or f"freq={expected_freq}" not in status:
+            raise RuntimeError(f"Contest radio {iface} is not enabled on the expected frequency")
+        if (Path("/sys/class/net")/iface/"master").resolve().name != BRIDGE:
+            raise RuntimeError(f"Contest radio {iface} did not join the contest bridge")
+    for family in ("inet","bridge"):
+        run("nft","list","table",family,"contest_lan")
+    if nm("GENERAL.CON-UUID") != state["uuid"] or nm("GENERAL.STATE").split()[0] != "100":
+        raise RuntimeError("Mobile hotspot connection changed during startup")
+    token = secrets.token_bytes(2)
+    header = token + struct.pack("!5H", 0x100, 1, 0, 0, 0)
+    question = b"\x09codeclash\x04test\x00\x00\x01\x00\x01"
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.settimeout(2)
+        sock.connect(("10.50.0.1", 53))
+        sock.send(header + question)
+        answer = sock.recv(512)
+        if answer[:2] != token or answer[6:8] != b"\x00\x01" or answer[-4:] != socket.inet_aton("10.50.0.1"):
+            raise RuntimeError("Unexpected DNS answer for codeclash.test")
+    with build_opener(ProxyHandler({})).open("http://10.50.0.1/", timeout=2) as resp:
+        if b"CodeClash 1.0" not in resp.read():
+            raise RuntimeError("Unexpected page")
+
+def start():
+    if BASE != Path("/opt/contest-lan"):
+        raise RuntimeError("Run install.sh first")
+    s = snapshot()
+    backup = ROOT / ("run-"+datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f"))
+    backup.mkdir()
+    s.update(backup=str(backup))
+    save(backup/"before.json",s)
+    (backup/"firewall-before.nft").write_text(run("nft","list","ruleset")+"\n")
+    keys = {
+        "Coding LAN 5 GHz": "ec4b33c6fa7e8fd9d0389b73d3d88bec5758f85016e815c87c90b14b56952ade",
+        "Coding LAN 2.4 GHz": "31270fe33b49d9916414d3aabfb9e2aae174f87bc3f7ed517770fe48d7e40db7",
+    }
+    configs = []
+    for iface, ssid, mode, channel in ((AP,'Coding LAN 5 GHz',"a",s["channel"]), (s["usb"],'Coding LAN 2.4 GHz',"g",6)):
+        psk = keys[ssid]
+        conf = backup/(iface+".conf")
+        conf.write_text(f"interface={iface}\nbridge={BRIDGE}\ndriver=nl80211\nssid={ssid}\nhw_mode={mode}\nchannel={channel}\n"
+                        "auth_algs=1\nwpa=2\nwpa_key_mgmt=WPA-PSK\nrsn_pairwise=CCMP\nap_isolate=1\n"
+                        "ctrl_interface=/run/contest-lan-ap\nwpa_psk="+psk+"\n")
+        configs.append(str(conf))
+    save(STATE,s)
+    try:
+        run("systemd-run","--quiet","--collect","--unit",TIMER,"--on-active=5min",
+            "--timer-property=AccuracySec=1s",str(BASE/"contest-lan"),"recover","--rollback-run",str(backup))
+        run("nft","-f",str(BASE/"firewall.nft"))
+        s["nm_requested"] = True
+        save(STATE,s)
+        NM_CONF.parent.mkdir(parents=True,exist_ok=True)
+        with NM_CONF.open("x") as out:
+            for iface in (AP,BRIDGE):
+                out.write(f"[device-contest-{iface}]\nmatch-device=interface-name:{iface}\nmanaged=0\n")
+
+        run("nmcli","general","reload","conf")
+        s["usb_management_requested"] = True
+        save(STATE,s)
+        run("nmcli","device","set",s["usb"],"managed","no")
+        for attempt in range(12):
+            if run("nmcli","-g","GENERAL.NM-MANAGED","device","show",s["usb"]) == "no":
+                break
+            time.sleep(.25)
+        else:
+            raise RuntimeError("NetworkManager did not release the ProDot adapter")
+        s["bridge_requested"] = True
+        save(STATE,s)
+        run("ip","link","add",BRIDGE,"type","bridge","stp_state","0","vlan_filtering","0")
+        run("ip","link","set",BRIDGE,"up")
+        s["ap_requested"] = True
+        save(STATE,s)
+        run("iw","phy",s["phy"],"interface","add",AP,"type","__ap")
+        run("ip","link","set",AP,"up")
+        run("ip","addr","add",ADDR,"dev",BRIDGE)
+        project=Path("/home/intercom/Launchpad/Coding Contest LAN/Coding Contest Server/backend")
+        launch(UNITS[2],[str(project/".venv/bin/python"),"-m","gunicorn","--bind","10.50.0.1:80","--workers","2","contest.wsgi:application"],
+               "User=intercom","WorkingDirectory="+str(project),"Environment=\"LD_LIBRARY_PATH="+str(project/"var/maria-runtime/usr/lib/x86_64-linux-gnu")+"\"","UMask=0077","AmbientCapabilities=CAP_NET_BIND_SERVICE","NoNewPrivileges=yes")
+        launch(UNITS[1],[shutil.which("dnsmasq"),"--keep-in-foreground","--conf-file="+str(BASE/"dnsmasq.conf")])
+        s["radio_requested"] = True
+        save(STATE,s)
+        launch(UNITS[0],[shutil.which("hostapd"),*configs])
+        for attempt in range(15):
+            try:
+                check_live()
+                break
+            except (RuntimeError,OSError):
+                if attempt == 14:
+                    raise
+                time.sleep(1)
+        print("Coding LAN 5 GHz and Coding LAN 2.4 GHz are using the configured contest password.")
+        print("Rollback armed for five minutes from startup. Run confirm after client checks.")
+    except BaseException:
+        recover()
+        raise
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("action",choices="preflight start confirm stop recover status diagnostics".split())
+    parser.add_argument("--rollback-run",help=argparse.SUPPRESS)
+    args = parser.parse_args()
+    a = args.action
+    if os.geteuid():
+        raise RuntimeError("Run with sudo on the laptop")
+    os.umask(0o077)
+    ROOT.mkdir(mode=0o700,exist_ok=True)
+    with (ROOT/"lock").open("a") as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX)
+        if args.rollback_run:
+            current = json.loads(STATE.read_text()) if STATE.exists() else {}
+            if a != "recover" or current.get("backup") != args.rollback_run or current.get("confirmed"):
+                return
+        if a == "preflight":
+            snapshot()
+            print("Preflight passed")
+        elif a == "start":
+            start()
+        elif a in ("recover","stop"):
+            recover()
+        elif a == "confirm":
+            if not STATE.exists():
+                raise RuntimeError("No active rollout")
+            check_live()
+            current = json.loads(STATE.read_text())
+            current["confirmed"] = True
+            save(STATE,current)
+            stop_unit(TIMER+".timer")
+            print("Confirmed")
+        else:
+            print("Recovery state:", STATE.read_text() if a=="diagnostics" and STATE.exists() else STATE.exists())
+            for cmd in [["systemctl","is-active",u] for u in UNITS+[TIMER+".timer"]]:
+                print(cmd[-1],run(*cmd,check=False))
+            if a == "diagnostics":
+                for cmd in (["ip","-br","addr","show",WIFI],["iw","dev",AP,"station","dump"],["bridge","link","show","master",BRIDGE],
+                            ["nft","list","table","inet","contest_lan"],["journalctl","-b","-n","80","--no-pager",
+                             "-u",UNITS[0],"-u",UNITS[1],"-u",UNITS[2],"-u",TIMER+".service"]):
+                    print(run(*cmd,check=False))
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (RuntimeError,OSError,ValueError) as error:
+        sys.exit(str(error))

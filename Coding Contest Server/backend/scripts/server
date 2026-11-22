@@ -1,0 +1,29 @@
+#!/bin/bash
+set -eu
+cd "$(dirname "$0")/.."
+project=$PWD
+web=coding-contest-pilot-web
+worker=coding-contest-pilot-judge
+db=coding-contest-pilot-db
+runtime="$project/var/maria-runtime/usr"
+libs="$runtime/lib/x86_64-linux-gnu"
+case "${1:-status}" in
+  start)
+    if [ -f var/db-key ] && ! systemctl --user is-active --quiet "$db"; then
+      systemd-run --user --quiet --collect --unit="$db" --working-directory="$project" --setenv="LD_LIBRARY_PATH=$libs" -p UMask=0077 -p Restart=on-failure -- "$runtime/sbin/mariadbd" --no-defaults --basedir="$runtime" --datadir="$project/var/maria-data" --socket="$project/var/mysql.sock" --pid-file="$project/var/mysql.pid" --skip-networking --innodb-buffer-pool-size=96M --max-connections=24
+    fi
+    if ! systemctl --user is-active --quiet "$worker"; then
+      systemd-run --user --quiet --collect --setenv="LD_LIBRARY_PATH=$libs" --unit="$worker" --working-directory="$project" -p UMask=0077 -p Restart=on-failure -- "$project/.venv/bin/python" manage.py worker
+    fi
+    if ! systemctl --user is-active --quiet coding-contest-pilot-presence; then
+      systemd-run --user --quiet --collect --setenv="LD_LIBRARY_PATH=$libs" --unit=coding-contest-pilot-presence --working-directory="$project" -p UMask=0077 -p Restart=on-failure -- "$project/.venv/bin/python" manage.py presence
+    fi
+    if ! systemctl --user is-active --quiet "$web"; then
+      systemd-run --user --quiet --collect --setenv="LD_LIBRARY_PATH=$libs" --unit="$web" --working-directory="$project" -p UMask=0077 -p Restart=on-failure -- "$project/.venv/bin/python" -m gunicorn --bind 127.0.0.1:8765 --workers 2 contest.wsgi:application
+    fi
+    ;;
+  stop) systemctl --user stop "$web" "$worker" coding-contest-pilot-presence
+    if systemctl --user is-active --quiet "$db"; then systemctl --user stop "$db"; fi ;;
+  status) systemctl --user is-active "$web" "$worker" "$db" coding-contest-pilot-presence ;;
+  *) echo 'Usage: scripts/server start|stop|status' >&2; exit 2 ;;
+esac

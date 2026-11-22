@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ ! -t 0 && -n ${DISPLAY:-} && ${1:-} != --terminal ]]; then
+    exec x-terminal-emulator -e "$0" --terminal
+fi
+trap 'echo "Startup stopped at line $LINENO. Review the message above."; if [[ -t 0 ]]; then read -rp "Press Enter to close."; fi' ERR
+project=$(cd -- "$(dirname -- "$0")" && pwd)
+cd "$project/Coding Contest Server/backend"
+export LD_LIBRARY_PATH="$PWD/var/maria-runtime/usr/lib/x86_64-linux-gnu"
+scripts/server start
+for attempt in {1..30}; do
+    if .venv/bin/python manage.py shell -c 'from django.db import connection; connection.ensure_connection()' >/dev/null 2>&1; then break; fi
+    sleep 1
+done
+.venv/bin/python manage.py migrate --noinput
+.venv/bin/python manage.py collectstatic --noinput -v0
+scripts/server status
+lan="$project/LAN Server/service"
+sudo -v
+if ! sudo test -f /var/lib/contest-lan/active.json; then
+    sudo "$lan/install.sh"
+    sudo contest-lan preflight
+    sudo contest-lan start
+elif ! sudo cmp -s "$lan/contest-lan" /opt/contest-lan/contest-lan || ! sudo cmp -s "$lan/dnsmasq.conf" /opt/contest-lan/dnsmasq.conf; then
+    echo "An older contest LAN is active. Stop it with sudo contest-lan stop, then reopen this launcher."
+    exit 1
+fi
+# Give the Acer the same contest DNS answer as the Wi-Fi clients.
+sudo resolvectl default-route contestbr0 no
+sudo resolvectl domain contestbr0 '~codeclash.test'
+sudo resolvectl dns contestbr0 10.50.0.1
+getent ahostsv4 codeclash.test | awk '$1=="10.50.0.1" {found=1} END {exit !found}'
+sudo contest-lan confirm
+contest_url=http://codeclash.test/login/
+echo "Contest login: $contest_url   Organizer: http://127.0.0.1:8765/organizer/"
+if [[ -n ${DISPLAY:-}${WAYLAND_DISPLAY:-} ]]; then
+    xdg-open "$contest_url"
+fi

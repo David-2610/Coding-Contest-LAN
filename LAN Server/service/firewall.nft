@@ -1,0 +1,20 @@
+table inet contest_lan {
+ chain input {
+  type filter hook input priority -100; policy accept;
+  iifname "contestbr0" ip saddr { 0.0.0.0, 10.50.0.0/24 } udp sport 68 udp dport 67 accept
+  iifname "contestbr0" ip saddr 10.50.0.0/24 ip daddr 10.50.0.1 udp dport 53 accept
+  iifname "contestbr0" ip saddr 10.50.0.0/24 ip daddr 10.50.0.1 tcp dport { 53, 80 } accept
+  iifname "contestbr0" counter drop
+ }
+ chain forward {
+  type filter hook forward priority -100; policy accept;
+  iifname "contestbr0" counter drop
+  oifname "contestbr0" counter drop
+ }
+}
+table bridge contest_lan {
+ chain forward {
+  type filter hook forward priority -200; policy accept;
+  meta ibrname "contestbr0" counter drop
+ }
+}

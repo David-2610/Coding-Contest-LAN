@@ -1,0 +1,89 @@
+# ==============================================================================
+# Code Clash 1.0 — Git Ignore Configuration
+# Protects passwords, security keys, database files, contestant code & data
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. Credentials, Secret Keys & Authentication Data (NEVER COMMIT)
+# ------------------------------------------------------------------------------
+*.key
+*.secret
+*.token
+*.pem
+*.crt
+*.pfx
+.env
+.env.*
+!.env.example
+var/django.key
+var/db-key
+var/ecode-sync.key
+var/pilot-logins
+var/mysql.sock
+var/mysql.pid
+var/worker.lock
+
+# ------------------------------------------------------------------------------
+# 2. Databases & Persistent Contest Storage (Participant code, scores, roster)
+# ------------------------------------------------------------------------------
+*.sqlite3
+*.sqlite3-journal
+*.db
+*.sql
+*.sql.gz
+*.dump
+var/maria-data/
+var/maria-runtime/
+var/maria-packages/
+var/maria-install.log
+var/toolchain/
+var/contest.sqlite3
+
+# ------------------------------------------------------------------------------
+# 3. Contestant Submissions, Archives, Exports & Temporary Data
+# ------------------------------------------------------------------------------
+organizer-export/
+*final*.json
+sync-payload*.json
+contest-*-final.json
+/tmp/
+*.dump
+*.log
+
+# ------------------------------------------------------------------------------
+# 4. Python Environment & Compilation Artifacts
+# ------------------------------------------------------------------------------
+.venv/
+venv/
+ENV/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ------------------------------------------------------------------------------
+# 5. Frontend Build, Dependencies & Static Cache
+# ------------------------------------------------------------------------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+var/static/
+backend/var/static/
+frontend/dist/banners/
+var/static/banners/
+*.png.tmp
+
+# ------------------------------------------------------------------------------
+# 6. Operating System & Editor Files
+# ------------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~

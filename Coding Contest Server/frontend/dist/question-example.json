@@ -1,0 +1,85 @@
+{
+  "schemaVersion": "1.0",
+  "id": "CC001",
+  "title": "Sum of Two Numbers",
+  "difficulty": "Easy",
+  "topics": [
+    "Basic Programming",
+    "Mathematics"
+  ],
+  "description": "Given two integers A and B, calculate their sum.",
+  "inputFormat": "A single line containing two integers A and B.",
+  "outputFormat": "Print a single integer representing A + B.",
+  "constraints": [
+    "-1000000 <= A <= 1000000",
+    "-1000000 <= B <= 1000000"
+  ],
+  "examples": [
+    {
+      "input": "2 3\n",
+      "output": "5\n",
+      "explanation": "2 + 3 = 5"
+    },
+    {
+      "input": "-4 7\n",
+      "output": "3\n",
+      "explanation": "-4 + 7 = 3"
+    }
+  ],
+  "testCases": [
+    {
+      "id": "TC001",
+      "input": "2 3\n",
+      "expectedOutput": "5\n",
+      "visibility": "public",
+      "weight": 1
+    },
+    {
+      "id": "TC002",
+      "input": "-4 7\n",
+      "expectedOutput": "3\n",
+      "visibility": "public",
+      "weight": 1
+    },
+    {
+      "id": "TC003",
+      "input": "1000000 1000000\n",
+      "expectedOutput": "2000000\n",
+      "visibility": "hidden",
+      "weight": 1
+    },
+    {
+      "id": "TC004",
+      "input": "-1000000 -1000000\n",
+      "expectedOutput": "-2000000\n",
+      "visibility": "hidden",
+      "weight": 1
+    }
+  ],
+  "execution": {
+    "timeLimitMs": 2000,
+    "memoryLimitMB": 256,
+    "outputComparison": "trimTrailingWhitespace"
+  },
+  "scoring": {
+    "maxScore": 100,
+    "method": "allOrNothing"
+  },
+  "languages": {
+    "cpp17": {
+      "displayName": "C++17",
+      "fileName": "main.cpp",
+      "starterCode": "#include <bits/stdc++.h>\nusing namespace std;\n\nint main() {\n    ios::sync_with_stdio(false);\n    cin.tie(nullptr);\n\n    long long a, b;\n    cin >> a >> b;\n\n    // Write your solution here\n\n    return 0;\n}\n"
+    },
+    "python3": {
+      "displayName": "Python 3",
+      "fileName": "main.py",
+      "starterCode": "def solve():\n    a, b = map(int, input().split())\n    # Write your solution here\n\nif __name__ == '__main__':\n    solve()\n"
+    },
+    "java21": {
+      "displayName": "Java 21",
+      "fileName": "Main.java",
+      "starterCode": "import java.util.*;\n\npublic class Main {\n    public static void main(String[] args) {\n        Scanner sc = new Scanner(System.in);\n        long a = sc.nextLong();\n        long b = sc.nextLong();\n\n        // Write your solution here\n    }\n}\n"
+    }
+  }
+}
