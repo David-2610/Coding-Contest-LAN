@@ -129,7 +129,12 @@ def session_info(request):
     user=request.user
     rows=[]
     for c in Contest.objects.order_by("-starts"):
-        if c.stage=="Draft" and not user.is_staff:continue
+        # Never expose Question Bank Repository or Draft contests to students/non-staff
+        if (c.title == "Question Bank Repository" or c.stage == "Draft") and not user.is_staff:
+            continue
+        # Also hide Question Bank Repository completely from client lobby
+        if c.title == "Question Bank Repository":
+            continue
         now=timezone.now()
         rows.append(dict(
             id=c.pk,
@@ -138,6 +143,7 @@ def session_info(request):
             banner=c.banner_path or c.banner_url,
             duration=c.duration_minutes,
             totalProblems=c.total_problems,
+            problemCount=c.problem_set.count(),
             batchTarget=c.batch_target,
             ecodeContestId=c.ecode_contest_id,
             ecodeEventId=c.ecode_event_id,
@@ -209,14 +215,64 @@ def monitor(request,cid):
 @organizer
 @require_POST
 def create_contest(request):
-    class Schedule(forms.Form):
-        title=forms.CharField(max_length=100)
-        starts=forms.DateTimeField()
-        ends=forms.DateTimeField()
-    f=Schedule(request.POST)
-    if not f.is_valid() or f.cleaned_data['starts']>=f.cleaned_data['ends']:return error("Supply a title and an end time after the start.")
-    c=Contest.objects.create(stage="Draft",**f.cleaned_data)
-    return JsonResponse({"id":c.pk},status=201)
+    try:
+        data = json.loads(request.body.decode() if request.body else "{}")
+    except Exception:
+        data = request.POST.dict()
+    
+    title = data.get("title", "").strip()
+    if not title:
+        return error("Supply a contest title.")
+    
+    duration = int(data.get("durationMinutes") or 60)
+    starts_str = data.get("starts")
+    ends_str = data.get("ends")
+    
+    now = timezone.now()
+    if starts_str and ends_str:
+        from django.utils.dateparse import parse_datetime
+        starts = parse_datetime(starts_str) or now
+        ends = parse_datetime(ends_str) or (starts + timedelta(minutes=duration))
+    else:
+        starts = now
+        ends = now + timedelta(minutes=duration)
+    
+    if starts >= ends:
+        ends = starts + timedelta(minutes=duration)
+    
+    stage = data.get("stage", "Waiting Room")
+    if stage not in ("Draft", "Scheduled", "Waiting Room", "Active"):
+        stage = "Waiting Room"
+        
+    c = Contest.objects.create(
+        title=title,
+        description=data.get("description", ""),
+        duration_minutes=duration,
+        starts=starts,
+        ends=ends,
+        stage=stage
+    )
+    return JsonResponse({"id": c.pk, "ok": True}, status=201)
+
+@organizer
+@require_POST
+@transaction.atomic
+def delete_contest(request, cid):
+    c = get_object_or_404(Contest.objects.select_for_update(), pk=cid)
+    if c.title == "Question Bank Repository":
+        return error("The Question Bank Repository cannot be deleted.", 403)
+    
+    # Safe delete dependent objects
+    from .models import Draft, Job, Entry, ConnectionEvent, Decision
+    Draft.objects.filter(entry__contest=c).delete()
+    Job.objects.filter(entry__contest=c).delete()
+    c.problem_set.all().delete()
+    Decision.objects.filter(entry__contest=c).delete()
+    ConnectionEvent.objects.filter(entry__contest=c).delete()
+    Entry.objects.filter(contest=c).delete()
+    
+    c.delete()
+    return JsonResponse({"ok": True, "deleted": cid})
 
 @organizer
 @require_POST
@@ -431,6 +487,54 @@ def copy_from_bank(request, cid):
         return JsonResponse({"ok": True, "count": len(copied_ids), "ids": copied_ids})
     except Exception as e:
         return error(f"Failed to copy questions: {e}", 500)
+
+@organizer
+@require_POST
+@transaction.atomic
+def remove_problem_from_contest(request, cid, pid):
+    """Remove a problem from a specific contest while preserving it in the master Question Bank."""
+    c = get_object_or_404(Contest.objects.select_for_update(), pk=cid)
+    # Only lock removal during an ongoing live Active round
+    now = timezone.now()
+    if c.stage == "Active" and c.starts <= now < c.ends:
+        return error("Questions are locked during an active round.", 409)
+    if c.stage == "automatic" and c.starts <= now < c.ends:
+        return error("Questions are locked during an active round.", 409)
+    
+    p = get_object_or_404(Problem, pk=pid, contest=c)
+    
+    # Ensure it exists in Question Bank Repository before removing from this contest
+    bank_contest, _ = Contest.objects.get_or_create(
+        title="Question Bank Repository",
+        defaults={
+            "stage": "Draft",
+            "starts": timezone.now() + timedelta(days=365),
+            "ends": timezone.now() + timedelta(days=365*10)
+        }
+    )
+    if c != bank_contest:
+        bank_problem = Problem.objects.filter(contest=bank_contest, external_id=p.external_id).first() if p.external_id else None
+        if not bank_problem:
+            Problem.objects.create(
+                contest=bank_contest,
+                external_id=p.external_id,
+                title=p.title,
+                statement=p.statement,
+                package=p.package,
+                cases=p.cases,
+                function=p.function,
+                starter=p.starter,
+                signature=p.signature,
+                published=True
+            )
+    
+    # Delete dependent drafts/jobs in this contest to avoid ProtectedError
+    from .models import Draft, Job
+    Draft.objects.filter(problem=p).delete()
+    Job.objects.filter(problem=p).delete()
+    p.delete()
+    
+    return JsonResponse({"ok": True, "removed": pid})
 
 @organizer
 def job_detail(request,jid):
