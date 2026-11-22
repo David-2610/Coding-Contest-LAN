@@ -16,7 +16,7 @@ echo "[1/4] Rebuilding frontend static assets..."
 .venv/bin/python manage.py collectstatic --noinput -v0
 
 echo "[2/4] Restarting Web Server, Judge Worker & Presence Services..."
-scripts/server restart
+scripts/server restart 2>/dev/null || scripts/server start
 
 echo "[3/4] Checking database connection..."
 .venv/bin/python manage.py shell -c 'from django.db import connection; connection.ensure_connection(); print("Database connection: OK")'
