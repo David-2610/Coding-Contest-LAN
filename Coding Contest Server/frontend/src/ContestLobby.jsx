@@ -77,9 +77,32 @@ export function Roster(){
 }
 
 export function GlobalBoard(){
-  const [batches,setBatches]=useState(['all']),[batch,select]=useState('all'),[page,turn]=useState(1);
+  const [batches,setBatches]=useState([{key:'all',name:'All Batches (Global)'}]),[batch,select]=useState('all'),[page,turn]=useState(1);
   const [data,show]=useState(null),[error,report]=useState(''),[attempt,retry]=useState(0);
-  React.useEffect(()=>{api('/api/ecode/leaderboards?list=1').then(r=>{if(Array.isArray(r.data))setBatches([...new Set(['all',...r.data.map(String)])])}).catch(()=>{})},[attempt]);
+  React.useEffect(()=>{
+    api('/api/ecode/leaderboards?list=1').then(r=>{
+      if(Array.isArray(r.data)){
+        const list=[{key:'all',name:'All Batches (Global)'}];
+        const seen=new Set(['all']);
+        for(const item of r.data){
+          if(!item) continue;
+          let k='', n='';
+          if(typeof item==='object'){
+            k=String(item.batchKey??item.key??item.batch??item.id??'');
+            n=String(item.batchName??item.name??item.title??k);
+          }else{
+            k=String(item);
+            n=k==='all'?'All Batches (Global)':(k.startsWith('20')?`Batch ${k}`:k);
+          }
+          if(k && !seen.has(k)){
+            seen.add(k);
+            list.push({key:k, name:n});
+          }
+        }
+        setBatches(list);
+      }
+    }).catch(()=>{});
+  },[attempt]);
   React.useEffect(()=>{
     let current=true;show(null);report('');
     api('/api/ecode/leaderboards?batch='+encodeURIComponent(batch)+'&page='+page).then(r=>{
@@ -89,8 +112,8 @@ export function GlobalBoard(){
     return ()=>{current=false};
   },[batch,page,attempt]);
   return <><div className="page-heading"><div><span className="eyeline">E-Code online</span><h1>Global rankings</h1><p>Published results across contests, grouped by academic batch.</p></div></div>
-  <section className="card panel"><label>Batch <select value={batch} onChange={e=>{select(e.target.value);turn(1)}}>{batches.map(b=><option value={b} key={b}>{b==='all'?'All batches':b}</option>)}</select></label>
-  {error?<><p role="alert">{error}</p><button onClick={()=>retry(attempt+1)}>Retry</button></>:!data?<p>Loading rankings…</p>:<>
-  <p>{data.totalParticipants} participants</p><table><thead><tr><th>Rank</th><th>Contestant</th><th>Score</th></tr></thead><tbody>{data.rankings.map((r,i)=><tr key={i}><td>{r.rank??(page-1)*50+i+1}</td><td>{r.fullName||r.username||'—'}</td><td>{r.totalScore??r.score??'—'}</td></tr>)}</tbody></table>
-  {!data.rankings.length&&<p>No published results for this batch yet.</p>}<div className="actions"><button disabled={page===1} onClick={()=>turn(page-1)}>Previous</button><span>Page {page}</span><button disabled={page*50>=data.totalParticipants} onClick={()=>turn(page+1)}>Next</button></div></>}</section></>
+  <section className="card panel"><label style={{display:'flex',alignItems:'center',gap:'10px',fontWeight:600,marginBottom:'16px'}}>Batch <select value={batch} onChange={e=>{select(e.target.value);turn(1)}} style={{padding:'6px 12px',borderRadius:'6px',border:'1px solid #cbd5e1',fontSize:'0.92rem'}}>{batches.map(b=><option value={b.key} key={b.key}>{b.name}</option>)}</select></label>
+  {error?<><p role="alert" style={{color:'#9c2940'}}>{error}</p><button onClick={()=>retry(attempt+1)}>Retry</button></>:!data?<p>Loading rankings…</p>:<>
+  <p style={{color:'#475569',fontWeight:600}}>{data.totalParticipants??0} participants</p><table><thead><tr><th>Rank</th><th>Contestant</th><th>Score</th></tr></thead><tbody>{data.rankings.map((r,i)=><tr key={i}><td><strong>#{r.rank??(page-1)*50+i+1}</strong></td><td>{r.fullName||r.username||'—'}</td><td><strong>{r.totalScore??r.score??'—'}</strong></td></tr>)}</tbody></table>
+  {!data.rankings.length&&<p style={{padding:'20px 0',textAlign:'center',color:'#64748b'}}>No published results for {batches.find(b=>b.key===batch)?.name||batch} yet.</p>}{(data.totalParticipants>50||page>1)&&<div className="actions"><button disabled={page===1} onClick={()=>turn(page-1)}>Previous</button><span>Page {page}</span><button disabled={page*50>=(data.totalParticipants||0)} onClick={()=>turn(page+1)}>Next</button></div>}</>}</section></>
 }

@@ -700,7 +700,7 @@ def online_board(request):
     batch = request.GET.get("batch","all")
     page = request.GET.get("page","1")
     contest = request.GET.get("contest","")
-    if not re.fullmatch(r"all|[0-9]{4}",batch) or not re.fullmatch(r"[1-9][0-9]{0,4}",page) or not re.fullmatch(r"[\w-]{0,100}",contest):
+    if not re.fullmatch(r"all|[\w-]{1,50}",batch) or not re.fullmatch(r"[1-9][0-9]{0,4}",page) or not re.fullmatch(r"[\w-]{0,100}",contest):
         return error("Invalid leaderboard selection.",400)
     url = (base+"/batches" if request.GET.get("list")=="1" else base+"/contests/"+contest if contest
            else base+"?"+urlencode(dict(batch=batch,page=page,limit=50)))
@@ -708,7 +708,7 @@ def online_board(request):
     data=cache.get(key)
     if data is None:
         try:
-            with urlopen(url,timeout=4) as response:
+            with urlopen(url,timeout=10) as response:
                 result=json.load(response)
             if result["success"] is not True:raise ValueError
             data=result["data"]
