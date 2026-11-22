@@ -50,6 +50,7 @@ class Entry(models.Model):
 class Problem(models.Model):
     contest = models.ForeignKey(Contest,on_delete=models.CASCADE)
     title = models.CharField(max_length=120)
+    order = models.PositiveIntegerField(default=0, db_index=True)
     external_id=models.CharField(max_length=64, null=True, blank=True)
     package=models.JSONField(default=dict,blank=True)
     statement = models.TextField()

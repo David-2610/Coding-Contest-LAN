@@ -11,14 +11,22 @@ function BankPicker({cid, onDone}) {
   function toggle(id) {
     setSelected(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   }
+  function moveSelected(index, dir) {
+    const target = index + dir;
+    if (target < 0 || target >= selected.length) return;
+    const copy = [...selected];
+    const [item] = copy.splice(index, 1);
+    copy.splice(target, 0, item);
+    setSelected(copy);
+  }
   return (
     <section className="card formgrid" style={{background:'#f8fafc', padding:'16px', borderRadius:'8px', border:'1px solid #e2e8f0', margin:'12px 0'}}>
       <h2>Import from Master Question Bank</h2>
-      <p style={{fontSize:'0.9rem', color:'#555', margin:'4px 0 10px 0'}}>Select any questions previously uploaded to add them to this contest.</p>
+      <p style={{fontSize:'0.9rem', color:'#555', margin:'4px 0 10px 0'}}>Select any questions previously uploaded to add them to this contest. You can rearrange their sequence before adding.</p>
       {err && <p role="alert" style={{color:'#9c2940'}}>{err}</p>}
       {bank === null ? <p>Loading question bank…</p> : !bank.length ? <p>No questions found in bank.</p> : (
         <div>
-          <div style={{display:'flex', flexDirection:'column', gap:'8px', maxHeight:'280px', overflowY:'auto', margin:'10px 0'}}>
+          <div style={{display:'flex', flexDirection:'column', gap:'8px', maxHeight:'260px', overflowY:'auto', margin:'10px 0'}}>
             {bank.map(q => (
               <label key={q.id} style={{display:'flex', gap:'10px', alignItems:'flex-start', background:'#fff', padding:'10px', borderRadius:'6px', border:'1px solid #cbd5e1', cursor:'pointer'}}>
                 <input type="checkbox" checked={selected.includes(q.id)} onChange={() => toggle(q.id)}/>
@@ -31,6 +39,66 @@ function BankPicker({cid, onDone}) {
               </label>
             ))}
           </div>
+
+          {selected.length > 0 && bank && (
+            <div style={{margin:'14px 0', padding:'12px', background:'#f1f5f9', borderRadius:'8px', border:'1px solid #cbd5e1'}}>
+              <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'8px'}}>
+                <strong style={{fontSize:'0.9rem', color:'#1e293b'}}>
+                  Selected Questions Sequence ({selected.length})
+                </strong>
+                <span style={{fontSize:'0.78rem', color:'#64748b'}}>Use ⬆ / ⬇ to arrange question order for contest</span>
+              </div>
+              <div style={{display:'flex', flexDirection:'column', gap:'6px'}}>
+                {selected.map((id, idx) => {
+                  const q = bank.find(x => x.id === id);
+                  if (!q) return null;
+                  return (
+                    <div key={id} style={{display:'flex', alignItems:'center', justifyContent:'space-between', background:'#fff', padding:'6px 10px', borderRadius:'6px', border:'1px solid #e2e8f0'}}>
+                      <div style={{display:'flex', alignItems:'center', gap:'8px', minWidth:0}}>
+                        <span style={{fontWeight:700, fontSize:'0.82rem', background:'#e2e8f0', color:'#475569', borderRadius:'4px', padding:'2px 6px', flexShrink:0}}>
+                          #{idx + 1}
+                        </span>
+                        <strong style={{fontSize:'0.88rem', color:'#1e293b', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{q.title}</strong>
+                        <small style={{color:'#64748b', flexShrink:0}}>({q.difficulty || 'Easy'} · {q.maxScore || 100} pts)</small>
+                      </div>
+                      <div style={{display:'flex', alignItems:'center', gap:'4px', flexShrink:0}}>
+                        <button
+                          type="button"
+                          className="secondary"
+                          disabled={idx === 0}
+                          title="Move earlier in sequence"
+                          style={{padding:'2px 8px', fontSize:'0.8rem'}}
+                          onClick={() => moveSelected(idx, -1)}
+                        >
+                          ⬆
+                        </button>
+                        <button
+                          type="button"
+                          className="secondary"
+                          disabled={idx === selected.length - 1}
+                          title="Move later in sequence"
+                          style={{padding:'2px 8px', fontSize:'0.8rem'}}
+                          onClick={() => moveSelected(idx, 1)}
+                        >
+                          ⬇
+                        </button>
+                        <button
+                          type="button"
+                          className="secondary"
+                          title="Remove from selection"
+                          style={{padding:'2px 8px', fontSize:'0.8rem', color:'#dc2626'}}
+                          onClick={() => toggle(id)}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           <label style={{display:'block', margin:'10px 0'}}>
             <input type="checkbox" checked={replace} onChange={e => setReplace(e.target.checked)}/> Replace existing question with matching ID if already in contest
           </label>
@@ -41,7 +109,7 @@ function BankPicker({cid, onDone}) {
                 await api('/api/organizer/' + cid + '/copy-bank', {problemIds: selected, replace});
                 onDone();
               } catch(e) { fail(e.message); } finally { wait(false); }
-            }}>Add {selected.length} selected question{selected.length > 1 ? 's' : ''}</button>
+            }}>Add {selected.length} selected question{selected.length > 1 ? 's' : ''} in sequence</button>
             <button type="button" className="secondary" onClick={onDone}>Cancel</button>
           </div>
         </div>
@@ -52,6 +120,16 @@ function BankPicker({cid, onDone}) {
 
 function Author({cid, onDone}) {
   const [items, set] = useState(null), [err, fail] = useState(''), [replace, toggle] = useState(false), [busy, wait] = useState(false);
+
+  function moveItem(index, dir) {
+    const target = index + dir;
+    if (!items || target < 0 || target >= items.length) return;
+    const copy = [...items];
+    const [item] = copy.splice(index, 1);
+    copy.splice(target, 0, item);
+    set(copy);
+  }
+
   return (
     <section className="card formgrid" style={{background:'#f8fafc', padding:'16px', borderRadius:'8px', border:'1px solid #e2e8f0', margin:'12px 0'}}>
       <h2>Add / Import Questions (Single or Multiple)</h2>
@@ -81,15 +159,26 @@ function Author({cid, onDone}) {
       }}/>
       {items && (
         <div style={{marginTop:'12px', background:'#fff', padding:'12px', borderRadius:'6px', border:'1px solid #cbd5e1'}}>
-          <h3>{items.length === 1 ? items[0].title : `${items.length} Questions Ready to Insert`}</h3>
-          <ul style={{margin:'8px 0 12px 20px', padding:0}}>
+          <h3>{items.length === 1 ? items[0].title : `${items.length} Questions Ready to Insert (Use ⬆/⬇ to Reorder)`}</h3>
+          <div style={{display:'flex', flexDirection:'column', gap:'6px', margin:'8px 0 12px 0'}}>
             {items.map((doc, idx) => (
-              <li key={idx}>
-                <strong>{doc.title}</strong> <small style={{color:'#64748b'}}>({doc.id || 'No ID'})</small> · {doc.difficulty || 'Normal'} · {doc.scoring?.maxScore ?? 100} pts
-                ({doc.testCases?.filter(t => t?.visibility === "public").length} public, {doc.testCases?.filter(t => t?.visibility === "hidden").length} hidden tests)
-              </li>
+              <div key={idx} style={{display:'flex', alignItems:'center', justifyContent:'space-between', background:'#f8fafc', padding:'6px 10px', borderRadius:'6px', border:'1px solid #e2e8f0'}}>
+                <div style={{display:'flex', alignItems:'center', gap:'8px', minWidth:0}}>
+                  <span style={{fontWeight:700, fontSize:'0.82rem', background:'#e2e8f0', color:'#475569', borderRadius:'4px', padding:'2px 6px', flexShrink:0}}>
+                    #{idx + 1}
+                  </span>
+                  <strong style={{fontSize:'0.88rem', color:'#1e293b'}}>{doc.title}</strong>
+                  <small style={{color:'#64748b'}}>({doc.id || 'No ID'}) · {doc.difficulty || 'Normal'} · {doc.scoring?.maxScore ?? 100} pts</small>
+                </div>
+                {items.length > 1 && (
+                  <div style={{display:'flex', alignItems:'center', gap:'4px', flexShrink:0}}>
+                    <button type="button" className="secondary" disabled={idx === 0} style={{padding:'2px 8px', fontSize:'0.78rem'}} onClick={() => moveItem(idx, -1)}>⬆</button>
+                    <button type="button" className="secondary" disabled={idx === items.length - 1} style={{padding:'2px 8px', fontSize:'0.78rem'}} onClick={() => moveItem(idx, 1)}>⬇</button>
+                  </div>
+                )}
+              </div>
             ))}
-          </ul>
+          </div>
           <label style={{display:'block', margin:'10px 0'}}>
             <input type="checkbox" checked={replace} onChange={e => toggle(e.target.checked)}/> Replace existing question(s) with matching IDs if already added
           </label>
@@ -1185,31 +1274,91 @@ export function Organizer({session}) {
               </div>
 
               {form === 'bank' ? (
-                <BankPicker cid={cid} onDone={() => setForm('')}/>
+                <BankPicker cid={cid} onDone={() => { setForm(''); if (cid) api('/api/organizer/' + cid).then(load); }}/>
               ) : form === 'problem' ? (
-                <Author cid={cid} onDone={() => setForm('')}/>
+                <Author cid={cid} onDone={() => { setForm(''); if (cid) api('/api/organizer/' + cid).then(load); }}/>
               ) : (
-                data.problems?.map(p => (
+                data.problems?.map((p, idx) => (
                   <div className="event" key={p.id} style={{display:'flex', justifyContent:'space-between', alignItems:'center', padding:'12px 14px', background:'#fff', border:'1px solid #e2e8f0', borderRadius:'8px', marginBottom:'8px'}}>
-                    <div>
-                      <b style={{fontSize:'1rem', color:'#1e293b'}}>{p.title}</b>
-                      <span className="pill" style={{marginLeft:'10px', background: p.published ? '#ecfdf5' : '#fef2f2', color: p.published ? '#059669' : '#dc2626'}}>
-                        {p.published ? 'Published' : 'Draft'}
+                    <div style={{display:'flex', alignItems:'center', gap:'12px', minWidth:0}}>
+                      <span style={{
+                        display:'inline-flex',
+                        alignItems:'center',
+                        justifyContent:'center',
+                        minWidth:'32px',
+                        height:'32px',
+                        borderRadius:'6px',
+                        background:'#f1f5f9',
+                        color:'#334155',
+                        fontWeight:700,
+                        fontSize:'0.9rem',
+                        flexShrink:0
+                      }}>
+                        #{idx + 1}
                       </span>
+                      <div style={{minWidth:0}}>
+                        <div style={{display:'flex', alignItems:'center', gap:'8px', flexWrap:'wrap'}}>
+                          <b style={{fontSize:'1rem', color:'#1e293b'}}>{p.title}</b>
+                          <span className="pill" style={{background: p.published ? '#ecfdf5' : '#fef2f2', color: p.published ? '#059669' : '#dc2626'}}>
+                            {p.published ? 'Published' : 'Draft'}
+                          </span>
+                        </div>
+                        <div style={{fontSize:'0.82rem', color:'#64748b', marginTop:'2px'}}>
+                          {p.difficulty || 'Easy'} · {p.maxScore ?? 100} pts · {p.testCount || 0} tests {p.externalId ? `· ID: ${p.externalId}` : ''}
+                        </div>
+                      </div>
                     </div>
-                    <button
-                      className="secondary"
-                      style={{padding:'4px 12px', fontSize:'0.82rem', color:'#dc2626', borderColor:'#fca5a5'}}
-                      onClick={async () => {
-                        if(!window.confirm(`Remove "${p.title}" from this contest? (It will remain safely preserved in the Question Bank)`)) return;
-                        try {
-                          await postForm(`/api/organizer/${cid}/problems/${p.id}/remove`, new FormData());
-                          api('/api/organizer/' + cid).then(load);
-                        } catch(e) { fail(e.message); }
-                      }}
-                    >
-                      🗑 Remove from Contest
-                    </button>
+                    <div style={{display:'flex', alignItems:'center', gap:'8px', flexShrink:0}}>
+                      <button
+                        type="button"
+                        className="secondary"
+                        disabled={idx === 0}
+                        title="Move question up in contest sequence"
+                        style={{padding:'4px 10px', fontSize:'0.82rem'}}
+                        onClick={async () => {
+                          const newOrder = data.problems.map(x => x.id);
+                          const [item] = newOrder.splice(idx, 1);
+                          newOrder.splice(idx - 1, 0, item);
+                          try {
+                            await api('/api/organizer/' + cid + '/problems/reorder', {order: newOrder});
+                            api('/api/organizer/' + cid).then(load);
+                          } catch(e) { fail(e.message); }
+                        }}
+                      >
+                        ⬆ Up
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary"
+                        disabled={idx === data.problems.length - 1}
+                        title="Move question down in contest sequence"
+                        style={{padding:'4px 10px', fontSize:'0.82rem'}}
+                        onClick={async () => {
+                          const newOrder = data.problems.map(x => x.id);
+                          const [item] = newOrder.splice(idx, 1);
+                          newOrder.splice(idx + 1, 0, item);
+                          try {
+                            await api('/api/organizer/' + cid + '/problems/reorder', {order: newOrder});
+                            api('/api/organizer/' + cid).then(load);
+                          } catch(e) { fail(e.message); }
+                        }}
+                      >
+                        ⬇ Down
+                      </button>
+                      <button
+                        className="secondary"
+                        style={{padding:'4px 12px', fontSize:'0.82rem', color:'#dc2626', borderColor:'#fca5a5'}}
+                        onClick={async () => {
+                          if(!window.confirm(`Remove "${p.title}" from this contest? (It will remain safely preserved in the Question Bank)`)) return;
+                          try {
+                            await postForm(`/api/organizer/${cid}/problems/${p.id}/remove`, new FormData());
+                            api('/api/organizer/' + cid).then(load);
+                          } catch(e) { fail(e.message); }
+                        }}
+                      >
+                        🗑 Remove
+                      </button>
+                    </div>
                   </div>
                 ))
               )}

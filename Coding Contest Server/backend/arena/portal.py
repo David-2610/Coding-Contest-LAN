@@ -6,8 +6,8 @@ from django import forms
 from django.contrib.auth import authenticate, login, logout, get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
-from django.db import transaction, IntegrityError
-from django.db.models import Count
+from django.db import models, transaction, IntegrityError
+from django.db.models import Count, Max
 from django.http import HttpResponse,JsonResponse
 from django.shortcuts import get_object_or_404,render
 from django.utils import timezone
@@ -225,7 +225,38 @@ def monitor(request,cid):
         if is_up: active_count += 1
     queued_count = Job.objects.filter(state="queued").count()
     judge_info = {"target": target_count, "active": active_count, "slots": slots}
-    return JsonResponse(dict(activeJobs=Job.objects.filter(entry__contest=c,state="running").count(),judge=judge_info,judgeActive=active_count>0,queuedJobs=queued_count,rows=rows,events=events,scores=scores,jobs=jobs,submissions=sum(counts.values()),problems=list(c.problem_set.values("id","title","published")),final=c.final is not None))
+    problems = []
+    for p in c.problem_set.order_by("order", "id"):
+        diff = p.package.get("difficulty") if p.package else None
+        max_score = p.package.get("scoring", {}).get("maxScore") if p.package else None
+        test_count = len(p.cases) if isinstance(p.cases, list) else 0
+        problems.append(dict(
+            id=p.pk,
+            title=p.title,
+            published=p.published,
+            externalId=p.external_id or "",
+            order=p.order,
+            difficulty=diff or "Easy",
+            maxScore=max_score or 100,
+            testCount=test_count
+        ))
+    return JsonResponse(dict(activeJobs=Job.objects.filter(entry__contest=c,state="running").count(),judge=judge_info,judgeActive=active_count>0,queuedJobs=queued_count,rows=rows,events=events,scores=scores,jobs=jobs,submissions=sum(counts.values()),problems=problems,final=c.final is not None))
+
+@organizer
+@require_POST
+@transaction.atomic
+def reorder_problems(request, cid):
+    c = get_object_or_404(Contest.objects.select_for_update(), pk=cid)
+    try:
+        data = json.loads(request.body.decode() if request.body else "{}")
+    except Exception:
+        data = request.POST.dict()
+    order = data.get("order", [])
+    if not isinstance(order, list):
+        return error("Expected a list of problem IDs")
+    for idx, pid in enumerate(order, start=1):
+        c.problem_set.filter(pk=pid).update(order=idx)
+    return JsonResponse({"ok": True, "count": len(order)})
 
 @organizer
 @require_POST
@@ -524,8 +555,9 @@ def copy_from_bank(request, cid):
         if not pids:
             return error("Select at least one problem to copy.")
         
+        max_order = c.problem_set.aggregate(m=models.Max("order"))["m"] or 0
         copied_ids = []
-        for pid in pids:
+        for idx, pid in enumerate(pids, start=1):
             source = Problem.objects.filter(pk=pid).first()
             if not source:
                 continue
@@ -546,6 +578,7 @@ def copy_from_bank(request, cid):
             target.starter = source.starter
             target.signature = source.signature
             target.published = True
+            target.order = max_order + idx
             target.save()
             copied_ids.append(target.pk)
         

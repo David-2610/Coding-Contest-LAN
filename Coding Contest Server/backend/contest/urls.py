@@ -10,6 +10,7 @@ urlpatterns=[
  path("api/organizer/bank",portal.question_bank),
  path("api/organizer/bank/upload",portal.bank_upload),
  path("api/organizer/<int:cid>/copy-bank",portal.copy_from_bank),
+ path("api/organizer/<int:cid>/problems/reorder",portal.reorder_problems),
  path("api/organizer/<int:cid>/problems/<int:pid>/remove",portal.remove_problem_from_contest),
  path("api/organizer/<int:cid>/stage",portal.transition),
  path("api/organizer/roster/refresh",ecode_jobs.transfer),

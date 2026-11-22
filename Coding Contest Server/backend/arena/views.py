@@ -27,7 +27,7 @@ def workspace(request):
     contest=entry.contest
     problems=[]
     if entry.acknowledged and contest.stage not in ("Draft","Scheduled","Waiting Room") and timezone.now()>=contest.starts:
-        for p in Problem.objects.filter(contest=contest,published=True).order_by("id"):
+        for p in Problem.objects.filter(contest=contest,published=True).order_by("order","id"):
             languages={}
             for lang in LANGUAGES:
                 draft=Draft.objects.filter(entry=entry,problem=p,language=lang).first()
