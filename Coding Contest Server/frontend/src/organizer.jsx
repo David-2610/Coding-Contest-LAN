@@ -3,6 +3,49 @@ import React,{useState,useEffect,useRef} from 'react';
 import {api} from './workspace';
 import {clock,postForm} from './common';
 
+function BankPicker({cid,onDone}){
+  const [bank,setBank]=useState(null),[err,fail]=useState(''),[selected,setSelected]=useState([]),[busy,wait]=useState(false),[replace,setReplace]=useState(false);
+  useEffect(()=>{
+    api('/api/organizer/bank').then(d=>setBank(d.questions)).catch(e=>fail(e.message));
+  },[]);
+  function toggle(id){
+    setSelected(prev=>prev.includes(id)?prev.filter(x=>x!==id):[...prev,id]);
+  }
+  return <section className="card formgrid" style={{background:'#f8fafc',padding:'16px',borderRadius:'8px',border:'1px solid #e2e8f0'}}>
+    <h2>Import from Question Bank / Previous Contests</h2>
+    <p style={{fontSize:'0.9rem',color:'#555',margin:'4px 0 10px 0'}}>Select any questions previously uploaded or used in other rounds to add them to this contest.</p>
+    {err&&<p role="alert" style={{color:'#9c2940'}}>{err}</p>}
+    {bank===null?<p>Loading question bank…</p>:!bank.length?<p>No questions found in previous contests.</p>:(
+      <div>
+        <div style={{display:'flex',flexDirection:'column',gap:'8px',maxHeight:'280px',overflowY:'auto',margin:'10px 0'}}>
+          {bank.map(q=>(
+            <label key={q.id} style={{display:'flex',gap:'10px',alignItems:'flex-start',background:'#fff',padding:'10px',borderRadius:'6px',border:'1px solid #cbd5e1',cursor:'pointer'}}>
+              <input type="checkbox" checked={selected.includes(q.id)} onChange={()=>toggle(q.id)}/>
+              <div>
+                <strong>{q.title}</strong> <small style={{color:'#64748b'}}>({q.externalId})</small>
+                <div style={{fontSize:'0.85rem',color:'#64748b',marginTop:'2px'}}>
+                  {q.difficulty} · {q.maxScore} pts · {q.testCount} tests · <em>Source: {q.fromContest}</em>
+                </div>
+              </div>
+            </label>
+          ))}
+        </div>
+        <label style={{display:'block',margin:'10px 0'}}><input type="checkbox" checked={replace} onChange={e=>setReplace(e.target.checked)}/> Replace existing question with matching ID if already in contest</label>
+        <div className="actions">
+          <button disabled={busy||!selected.length} onClick={async()=>{
+            wait(true);
+            try{
+              await api('/api/organizer/'+cid+'/copy-bank',{problemIds:selected,replace});
+              onDone();
+            }catch(e){fail(e.message)}finally{wait(false)}
+          }}>Add {selected.length} selected question{selected.length>1?'s':''}</button>
+          <button type="button" className="secondary" onClick={onDone}>Cancel</button>
+        </div>
+      </div>
+    )}
+  </section>
+}
+
 function Author({cid,onDone}){
  const [items,set]=useState(null),[err,fail]=useState(''),[replace,toggle]=useState(false),[busy,wait]=useState(false);
  return <section className="card formgrid" style={{background:'#f8fafc',padding:'16px',borderRadius:'8px',border:'1px solid #e2e8f0'}}>
@@ -221,14 +264,14 @@ export function Organizer({session}){
  const visible=(data?.rows||[]).filter(r=>[r.name,r.enrollment,r.username].join(' ').toLowerCase().includes(query.toLowerCase())&&(status==='All'||(status==='Disqualified'?!r.eligible:r.presence===status))).sort((a,b)=>order==='name'?a.name.localeCompare(b.name):b.submits-a.submits);
  const contest=session.contests.find(x=>x.id===cid);
  const metrics=[['Registered entries',data?.rows.length,'#5a4abc'],['Online in workspace',data?.rows.filter(v=>v.presence==='Online').length,'#087a65'],['Unstable',data?.rows.filter(v=>v.presence==='Unstable').length,'#98651a'],['Disqualified',data?.rows.filter(v=>!v.eligible).length,'#9c2940'],['Disconnected',data?.rows.filter(v=>v.presence==='Disconnected').length,'#b04c28'],['Reconnected participants',data?.rows.filter(v=>v.reconnects>0).length,'#126a62'],['Active judge jobs',data?.activeJobs,'#485480'],['Official submissions',data?.submissions,'#34689e']];
- return <><div className="page-heading"><div><h1>Contest control</h1><p>Registration, judging and connection activity.</p></div><button onClick={()=>{select('E-Code Cloud');setForm('')}}>Fetch from E-Code</button></div><section className="contestbar"><div><label htmlFor="event">Selected contest</label><select id="event" value={cid||''} onChange={e=>{pick(+e.target.value);setForm('')}}>{session.contests.map(c=><option key={c.id} value={c.id}>{c.title}</option>)}</select></div>{contest&&<div>{({"Draft":"Scheduled","Scheduled":"Waiting Room","Waiting Room":"Active","Live":"Ended"})[contest.state]&&<button onClick={async()=>{const f=new FormData();f.set("stage",({"Draft":"Scheduled","Scheduled":"Waiting Room","Waiting Room":"Active","Live":"Ended"})[contest.state]);try{await postForm("/api/organizer/"+cid+"/stage",f);location.reload()}catch(e){fail(e.message)}}}>{{"Draft":"Schedule","Scheduled":"Open waiting room","Waiting Room":"Start round","Live":"End round"}[contest.state]}</button>}<span className={'pill '+contest.state}>{contest.state}</span><small>Ends {clock(contest.ends)}</small></div>}</section>
+ return <><div className="page-heading"><div><h1>Contest control</h1><p>Registration, judging and connection activity.</p></div><button onClick={()=>{select('E-Code Cloud');setForm('')}}>Fetch from E-Code</button></div><section className="contestbar"><div><label htmlFor="event">Selected contest</label><select id="event" value={cid||''} onChange={e=>{pick(+e.target.value);setForm('')}}>{session.contests.map(c=><option key={c.id} value={c.id}>{c.title}</option>)}</select></div>{contest&&<div style={{display:'flex',gap:'8px',alignItems:'center'}}>{({"Draft":"Scheduled","Scheduled":"Waiting Room","Waiting Room":"Active","Live":"Ended"})[contest.state]&&<button onClick={async()=>{const f=new FormData();f.set("stage",({"Draft":"Scheduled","Scheduled":"Waiting Room","Waiting Room":"Active","Live":"Ended"})[contest.state]);try{await postForm("/api/organizer/"+cid+"/stage",f);location.reload()}catch(e){fail(e.message)}}}>{{"Draft":"Schedule","Scheduled":"Open waiting room","Waiting Room":"Start round","Live":"End round"}[contest.state]}</button>}{contest.state==="Ended"&&<button className="secondary" onClick={async()=>{if(!window.confirm("Restart this contest and return it to Waiting Room?"))return;const f=new FormData();f.set("stage","Waiting Room");try{await postForm("/api/organizer/"+cid+"/stage",f);location.reload()}catch(e){fail(e.message)}}}>Restart contest</button>}<span className={'pill '+contest.state}>{contest.state}</span><small>Ends {clock(contest.ends)}</small></div>}</section>
  {err&&<p role="alert">{err}</p>}{notice&&<div className="alert" role="alert">{notice}<button onClick={()=>notify('')} className="link">Dismiss</button></div>}
  <section className="metrics">{metrics.map(([label,n,color])=><div key={label} style={{'--accent':color}}><span>{label}</span><strong>{n??'—'}</strong></div>)}</section>
  <div className="tabs" role="tablist">{['Participants','Connection events','Problems','Standings','Submissions','E-Code Cloud'].map(t=><button role="tab" aria-selected={tab===t} key={t} onClick={()=>{select(t);setForm('')}}>{t}</button>)}</div>
  {data&&<section className="card panel">
  {tab==='Participants'&&<><h2>Contest roster</h2><div className="actions"><input aria-label="Search entries" placeholder="Name, username or enrollment" value={query} onChange={e=>search(e.target.value)}/><select aria-label="Connection filter" value={status} onChange={e=>filter(e.target.value)}>{['All','Online','Unstable','Disconnected','Unknown','Disqualified'].map(s=><option key={s}>{s}</option>)}</select><select aria-label="Sort entries" value={order} onChange={e=>sort(e.target.value)}><option value="name">Name</option><option value="submits">Most submissions</option></select></div><table><thead><tr>{['Participant','Enrollment','Workspace','Missed (est.)','Observed duration','Reconnects','Last seen','Submissions','Eligibility'].map(h=><th key={h}>{h}</th>)}</tr></thead><tbody>{visible.map(r=><tr key={r.id}><td>{r.name}<small>{r.username}</small></td><td>{r.enrollment}</td><td><span className={'pill '+r.presence}>{r.presence}</span></td><td>{r.missed??"—"}</td><td>{r.connectedSeconds==null?"—":r.connectedSeconds+" s"}</td><td>{r.reconnects}</td><td>{r.last?clock(r.last):'—'}</td><td>{r.submits}</td><td>{!r.eligible&&<strong>Disqualified </strong>}{data.final?(r.eligible?"Eligible":"Disqualified"):<Decision row={r} done={()=>api("/api/organizer/"+cid).then(load)}/>}</td></tr>)}</tbody></table>{!data.rows.length&&<p>Entries appear when a candidate enters this contest.</p>}</>}
  {tab==='Connection events'&&<><h2>Connection activity</h2><p>Workspaces check in every 10 seconds. A 40-second gap triggers an alert. Closing the tab or device sleep can also cause a gap.</p>{data.events.map(e=><div className="event" key={e.id}><span className={'dot '+(e.kind==='Connected'?'good':'bad')}/><b>{e.entry__display}</b><span>{e.kind}</span><time>{clock(e.at)}</time></div>)}{!data.events.length&&<p>No workspace events yet.</p>}</>}
- {tab==='Problems'&&<><div className="bar"><h2>Problem set ({data.problems.length})</h2><button onClick={()=>setForm('problem')}>Add problem</button></div>{form==='problem'?<Author cid={cid} onDone={()=>setForm('')}/>:data.problems.map(p=><div className="event" key={p.id}><b>{p.title}</b><span>{p.published?'Published':'Draft'}</span></div>)}{!data.problems.length&&!form&&<p style={{padding:'12px 0',color:'#64748b'}}>No problems added yet. Click &quot;Add problem&quot; above to import a question JSON file.</p>}</>}
+ {tab==='Problems'&&<><div className="bar"><h2>Problem set ({data.problems.length})</h2><div style={{display:'flex',gap:'8px'}}><button className="secondary" onClick={()=>setForm(form==='bank'?'':'bank')}>Import from Question Bank</button><button onClick={()=>setForm(form==='problem'?'':'problem')}>Add problem</button></div></div>{form==='bank'?<BankPicker cid={cid} onDone={()=>setForm('')}/>:form==='problem'?<Author cid={cid} onDone={()=>setForm('')}/>:data.problems.map(p=><div className="event" key={p.id}><b>{p.title}</b><span>{p.published?'Published':'Draft'}</span></div>)}{!data.problems.length&&!form&&<p style={{padding:'12px 0',color:'#64748b'}}>No problems added yet. Click &quot;Import from Question Bank&quot; to reuse questions from previous contests, or &quot;Add problem&quot; to import a question JSON file.</p>}</>}
  {tab==='Standings'&&<><div className="bar"><h2>Live standings</h2><a href={'/leaderboard/'+cid+'/'}>Open projector ↗</a></div>{data.scores.map((s,i)=><div className="event" key={i}><b>#{s.rank} {s.name}</b><span>{s.score??s.solved} points · {s.solved} solved</span><time>{s.seconds}s</time></div>)}{data.final&&<EcodeTransfer key={cid} publish url={"/api/organizer/"+cid+"/publish"}/>} {data.final&&<a href={'/organizer-export/'+cid}>Download final JSON</a>}</>}
  {tab==='Submissions'&&<><h2>Recent submissions</h2>{data.jobs.map(j=><JobRow key={j.id} j={j}/>)}{!data.jobs.length&&<p>No official submissions or archived drafts yet.</p>}</>}
  {tab==='E-Code Cloud'&&<EcodeIntegration cid={cid} contest={contest} onRefresh={()=>location.reload()}/>}

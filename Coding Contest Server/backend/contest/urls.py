@@ -7,6 +7,8 @@ urlpatterns=[
  path("api/organizer/contest/remote",portal.preview_remote_contest_api),
  path("api/organizer/contest/<int:cid>/sync-preview",portal.sync_preview_api),
  path("api/organizer/contest/<int:cid>/readiness",portal.readiness_check_api),
+ path("api/organizer/bank",portal.question_bank),
+ path("api/organizer/<int:cid>/copy-bank",portal.copy_from_bank),
  path("api/organizer/<int:cid>/stage",portal.transition),
  path("api/organizer/roster/refresh",ecode_jobs.transfer),
  path("api/organizer/<int:cid>/publish",ecode_jobs.transfer),

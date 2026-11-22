@@ -66,9 +66,7 @@ class Command(BaseCommand):
                         for t in data["testCases"]
                     ]
 
-                    p = Problem.objects.filter(external_id=data["id"]).first()
-                    if p and p.contest_id != c.pk:
-                        raise CommandError(f"Question ID '{data['id']}' already exists in another contest (Contest {p.contest_id}).")
+                    p = Problem.objects.filter(contest=c, external_id=data["id"]).first()
                     if p and not replace:
                         raise CommandError(f"Question ID '{data['id']}' already exists in this contest. Use --replace to overwrite.")
 

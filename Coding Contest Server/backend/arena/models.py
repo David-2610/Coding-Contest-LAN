@@ -50,7 +50,7 @@ class Entry(models.Model):
 class Problem(models.Model):
     contest = models.ForeignKey(Contest,on_delete=models.CASCADE)
     title = models.CharField(max_length=120)
-    external_id=models.CharField(max_length=64, null=True, unique=True)
+    external_id=models.CharField(max_length=64, null=True, blank=True)
     package=models.JSONField(default=dict,blank=True)
     statement = models.TextField()
     function = models.SlugField(help_text="Python function name")
@@ -58,6 +58,9 @@ class Problem(models.Model):
     signature = models.JSONField(default=default_signature)
     cases = models.JSONField(help_text='List of objects with args (a positional argument list), expected, and sample (true or false).')
     published = models.BooleanField(default=False)
+
+    class Meta:
+        unique_together = (("contest", "external_id"),)
 
     def clean(self):
         import keyword

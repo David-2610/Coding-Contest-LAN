@@ -242,9 +242,9 @@ def author(request,cid):
             d["topics"]=list(dict.fromkeys(" ".join(t.split()).casefold() for t in d["topics"]))
             if "" in d["topics"]:return error("Topics cannot be empty.")
             cases=[dict(args=[t["input"]],expected=t["expectedOutput"],sample=t["visibility"]=="public") for t in d["testCases"]]
-            p=Problem.objects.filter(external_id=d["id"]).first()
-            if p and (p.contest_id!=cid or request.GET.get("replace")!="1"):
-                return error(f"Question ID '{d['id']}' already exists. Select replace to overwrite.",409)
+            p=Problem.objects.filter(contest=c, external_id=d["id"]).first()
+            if p and request.GET.get("replace")!="1":
+                return error(f"Question ID '{d['id']}' already exists in this contest. Select replace to overwrite.",409)
             p=p or Problem(contest=c,external_id=d["id"])
             p.title=d["title"];p.statement=d["description"];p.package=d;p.cases=cases;p.published=True
             p.function="solve";p.starter=d["languages"]["python3"]["starterCode"]
@@ -253,6 +253,73 @@ def author(request,cid):
     except SchemaError as e:return error(f"{e.json_path}: {e.message}"[:400])
     except (ValidationError,KeyError,ValueError,TypeError,IntegrityError) as e:return error(str(e))
     return JsonResponse({"ids":imported_ids, "count":len(imported_ids), "id":imported_ids[0]},status=201)
+
+@organizer
+def question_bank(request):
+    """List all unique questions available across all contests to import into any contest."""
+    seen = set()
+    questions = []
+    for p in Problem.objects.select_related("contest").order_by("-id"):
+        key = p.external_id or p.title
+        if key in seen:
+            continue
+        seen.add(key)
+        questions.append({
+            "id": p.pk,
+            "externalId": p.external_id or f"P{p.pk}",
+            "title": p.title,
+            "difficulty": p.package.get("difficulty", "Normal") if p.package else "Normal",
+            "maxScore": p.package.get("scoring", {}).get("maxScore", 100) if p.package else 100,
+            "topics": p.package.get("topics", []) if p.package else [],
+            "testCount": len(p.cases) if isinstance(p.cases, list) else 0,
+            "fromContest": p.contest.title,
+            "fromContestId": p.contest.pk
+        })
+    return JsonResponse({"questions": questions})
+
+@organizer
+@require_POST
+@transaction.atomic
+def copy_from_bank(request, cid):
+    """Copy one or more existing questions from question bank/other contests into the target contest."""
+    c = get_object_or_404(Contest.objects.select_for_update(), pk=cid)
+    if c.stage in ("Active", "Ended") or (c.stage == "automatic" and timezone.now() >= c.starts):
+        return error("Questions are locked once the round begins.", 409)
+    try:
+        data = json.loads(request.body or "{}")
+        pids = data.get("problemIds", [])
+        replace = bool(data.get("replace", False))
+        if not pids:
+            return error("Select at least one problem to copy.")
+        
+        copied_ids = []
+        for pid in pids:
+            source = Problem.objects.filter(pk=pid).first()
+            if not source:
+                continue
+            ext_id = source.external_id
+            existing = Problem.objects.filter(contest=c, external_id=ext_id).first() if ext_id else None
+            if existing:
+                if not replace:
+                    continue
+                target = existing
+            else:
+                target = Problem(contest=c, external_id=ext_id)
+            
+            target.title = source.title
+            target.statement = source.statement
+            target.package = source.package
+            target.cases = source.cases
+            target.function = source.function
+            target.starter = source.starter
+            target.signature = source.signature
+            target.published = True
+            target.save()
+            copied_ids.append(target.pk)
+        
+        return JsonResponse({"ok": True, "count": len(copied_ids), "ids": copied_ids})
+    except Exception as e:
+        return error(f"Failed to copy questions: {e}", 500)
 
 @organizer
 def job_detail(request,jid):
@@ -343,16 +410,27 @@ def online_board(request):
 def transition(request,cid):
     c=get_object_or_404(Contest.objects.select_for_update(),pk=cid)
     target=request.POST.get("stage")
-    allowed={"Draft":"Scheduled","Scheduled":"Waiting Room","Waiting Room":"Active","Active":"Ended"}
+    allowed={"Draft":"Scheduled","Scheduled":"Waiting Room","Waiting Room":"Active","Active":"Ended","Ended":"Waiting Room"}
     if c.stage=="automatic" and c.starts<=timezone.now()<c.ends:allowed["automatic"]="Ended"
-    if c.stage=="Active" and c.ends<=timezone.now():return error("Contest already ended.",409)
-    if target!=allowed.get(c.stage) or not target:return error("Invalid contest transition.",409)
+    if c.stage=="Active" and c.ends<=timezone.now() and target!="Ended":return error("Contest already ended.",409)
+    if target!=allowed.get(c.stage) and not (c.stage=="Ended" and target in ("Waiting Room","Scheduled","Active")):
+        return error("Invalid contest transition.",409)
     now=timezone.now()
     if target=="Active":
-        duration=c.ends-c.starts
+        duration=c.ends-c.starts if c.ends>c.starts else timedelta(minutes=c.duration_minutes or 60)
         c.starts=now
         c.ends=now+duration
-    elif target=="Ended":c.ends=now
+        c.final=None
+        c.final_entries=None
+    elif target=="Ended":
+        c.ends=now
+    elif target in ("Waiting Room","Scheduled"):
+        # Resetting or restarting contest
+        duration=timedelta(minutes=c.duration_minutes or 60)
+        c.starts=now
+        c.ends=now+duration
+        c.final=None
+        c.final_entries=None
     c.stage=target
     c.save()
     return JsonResponse({"ok":True})
