@@ -32,7 +32,7 @@ def workspace(request):
             for lang in LANGUAGES:
                 draft=Draft.objects.filter(entry=entry,problem=p,language=lang).first()
                 languages[lang]=dict(source=draft.source if draft else starter(p,lang),revision=draft.revision if draft else 0)
-            problems.append(dict(id=p.pk,title=p.title,statement=p.statement,details={k:p.package[k] for k in ("difficulty","topics","examples","inputFormat","outputFormat","constraints","execution","scoring") if k in p.package},samples=[c for c in p.cases if c["sample"]],
+            problems.append(dict(id=p.pk,external_id=p.external_id,title=p.title,statement=p.statement,function=p.function,signature=p.signature,details={k:p.package[k] for k in ("difficulty","topics","examples","inputFormat","outputFormat","constraints","execution","scoring") if k in p.package},samples=[c for c in p.cases if c.get("sample")],
                                  languages=languages,**languages["python"]))
     return JsonResponse(dict(eligible=entry.eligible,reason=entry.decision_reason,entry=entry.pk,name=entry.display,enrollment=entry.enrollment,contest=contest.pk,title=contest.title,ends=contest.ends.isoformat(),problems=problems))
 

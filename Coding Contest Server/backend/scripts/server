@@ -22,6 +22,10 @@ case "${1:-status}" in
       systemd-run --user --quiet --collect --setenv="LD_LIBRARY_PATH=$libs" --unit="$web" --working-directory="$project" -p UMask=0077 -p Restart=on-failure -- "$project/.venv/bin/python" -m gunicorn --bind 127.0.0.1:8765 --workers 2 contest.wsgi:application
     fi
     ;;
+  restart)
+    systemctl --user restart "$web" "$worker" coding-contest-pilot-presence
+    echo "Web, judge, and presence restarted."
+    ;;
   stop) systemctl --user stop "$web" "$worker" coding-contest-pilot-presence
     if systemctl --user is-active --quiet "$db"; then systemctl --user stop "$db"; fi ;;
   status) systemctl --user is-active "$web" "$worker" "$db" coding-contest-pilot-presence ;;

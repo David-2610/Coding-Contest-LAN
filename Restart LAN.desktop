@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Restart Contest LAN
+Comment=Restart CodeClash Wi-Fi Hotspot, DNS, and Network
+Exec="/home/intercom/Launchpad/Coding Contest LAN/Restart LAN"
+Icon=/home/intercom/Launchpad/Coding Contest LAN/Coding Contest Server/frontend/dist/ecode.jpg
+Terminal=true
+Categories=Network;

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Restart Contest Server
+Comment=Restart CodeClash Web Server, Frontend, and Judge Worker
+Exec="/home/intercom/Launchpad/Coding Contest LAN/Restart Server"
+Icon=/home/intercom/Launchpad/Coding Contest LAN/Coding Contest Server/frontend/dist/ecode.jpg
+Terminal=true
+Categories=Development;

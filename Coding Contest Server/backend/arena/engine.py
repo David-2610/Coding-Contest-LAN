@@ -41,7 +41,8 @@ def close_contest(cid):
         contest.save(update_fields=["final","final_entries"])
 
 def evaluate(job):
-    if job.language=="python" and not job.problem.package:
+    # Python with LeetCode format (Solution class or function)
+    if job.language=="python" and (not job.problem.package or job.problem.signature):
         return evaluate_cases(job,lambda args:execute(job.source,job.function,args))
     from .languages import compiled
     from pathlib import Path
@@ -54,10 +55,14 @@ def evaluate(job):
 def evaluate_cases(job,runner):
     rows=[]
     total=len(job.cases)
+    is_stdio = bool(job.problem.package and not job.problem.signature and job.problem.function == "solve")
     for i,case in enumerate(job.cases):
         status,actual=runner(case["args"])
         if status=="Returned":
-            equal=json.dumps(actual,sort_keys=True)==json.dumps(case["expected"].rstrip() if job.problem.package else case["expected"],sort_keys=True)
+            if is_stdio:
+                equal = json.dumps(actual,sort_keys=True)==json.dumps(case["expected"].rstrip(),sort_keys=True)
+            else:
+                equal = json.dumps(actual,sort_keys=True)==json.dumps(case["expected"],sort_keys=True)
             status="Passed" if equal else "Wrong answer"
         row={"number":i+1,"status":status}
         if case.get("sample"):
@@ -67,7 +72,9 @@ def evaluate_cases(job,runner):
             break
     passed=sum(row["status"]=="Passed" for row in rows)
     verdict="Accepted" if passed==total else "Failed"
-    if job.problem.package and passed!=total:verdict=next(row["status"] for row in rows if row["status"]!="Passed")
+    if passed!=total:
+        first_fail = next((row["status"] for row in rows if row["status"]!="Passed"), "Failed")
+        verdict = first_fail
     return dict(verdict=verdict,
                 passed=passed,total=total,skipped=total-len(rows),cases=rows)
 

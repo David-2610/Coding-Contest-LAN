@@ -15,7 +15,13 @@ source,name,args=json.loads(sys.stdin.read())
 scope={"__name__":"submission"}
 with contextlib.redirect_stdout(sys.stderr):
     exec(compile(source,"submission.py","exec"),scope)
-    value=scope[name](*args)
+    fn = scope.get(name)
+    if fn is None and "Solution" in scope:
+        sol = scope["Solution"]()
+        fn = getattr(sol, name, None)
+    if fn is None:
+        raise KeyError(name)
+    value=fn(*args)
 sys.stdout.write(json.dumps(value,allow_nan=False))
 """
 

@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Start CodeClash
+Exec="/home/intercom/Launchpad/Coding Contest LAN/Start CodeClash"
+Icon=/home/intercom/Launchpad/Coding Contest LAN/Coding Contest Server/frontend/dist/ecode.jpg
+Terminal=true

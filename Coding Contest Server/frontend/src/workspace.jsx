@@ -11,48 +11,260 @@ export async function api(url,body){
  if(!res.headers.get('content-type')?.includes('application/json'))throw Error('Session expired. Sign in again.');
  const data=await res.json();if(!res.ok)throw Error(data.error||'Request failed');return data;
 }
+
 function Editor({initial,onEdit,lang}){
  const host=useRef(null);
- useEffect(()=>{const editor=new EditorView({doc:initial,parent:host.current,extensions:[basicSetup,({python,cpp,java}[lang])(),EditorView.updateListener.of(update=>{if(update.docChanged)onEdit(update.state.doc.toString())})]});return()=>editor.destroy()},[]);
- return <div className="editor" ref={host}/>;
+ useEffect(()=>{
+   const editor=new EditorView({
+     doc:initial,
+     parent:host.current,
+     extensions:[
+       basicSetup,
+       ({python,cpp,java}[lang])(),
+       EditorView.theme({
+         "&": {height: "100%", fontSize: "14px", backgroundColor: "#ffffff", color: "#1f2937"},
+         ".cm-scroller": {overflow: "auto", fontFamily: "'JetBrains Mono', Consolas, monospace"},
+         ".cm-gutters": {backgroundColor: "#f9fafb", color: "#9ca3af", borderRight: "1px solid #e5e7eb"}
+       }, {dark: false}),
+       EditorView.updateListener.of(update=>{if(update.docChanged)onEdit(update.state.doc.toString())})
+     ]
+   });
+   return()=>editor.destroy();
+ },[lang]);
+ return <div className="lc-editor-wrapper" ref={host}/>;
 }
-function Problem({w,p,lang,pickLanguage}){
+
+function ProblemView({w,p,lang,pickLanguage}){
  const key=[w.entry,w.contest,p.id,lang].join('/'),rev=useRef(p.revision),text=useRef(p.source),synced=useRef(p.source),saving=useRef(false),dirty=useRef(false);
- const [initial,init]=useState(null),[saved,saveTests]=useState([]),[sync,syncStatus]=useState('Synced'),[message,msg]=useState(''),[res,result]=useState(null),[busy,setBusy]=useState(false);
- const [history,showHistory]=useState([]);
- function refreshHistory(){api("/api/problems/"+p.id+"/history").then(d=>showHistory(d.submissions)).catch(e=>msg(e.message))}
+ const [initial,init]=useState(null),[sync,syncStatus]=useState('Saved'),[message,msg]=useState(''),[res,result]=useState(null),[busy,setBusy]=useState(false);
+ const [history,showHistory]=useState([]),[descTab,setDescTab]=useState('Description'),[consoleTab,setConsoleTab]=useState('Testcase'),[activeCase,setActiveCase]=useState(0);
+
+ function refreshHistory(){api("/api/problems/"+p.id+"/history").then(d=>showHistory(d.submissions||[])).catch(e=>msg(e.message))}
  useEffect(refreshHistory,[]);
+
  async function flush(){
   if(saving.current||!dirty.current)return;
   saving.current=true;
   try{while(dirty.current){const value=text.current;dirty.current=false;
     const r=await api('/api/problems/'+p.id+'/draft',{source:value,revision:rev.current,language:lang});rev.current=r.revision;synced.current=value;
-    await set(key+'/draft',{source:text.current,rev:rev.current});syncStatus(dirty.current?'Saving…':'Synced');
+    await set(key+'/draft',{source:text.current,rev:rev.current});syncStatus(dirty.current?'Saving…':'Saved');
   }}catch(e){dirty.current=true;syncStatus(e.message)}finally{saving.current=false}
  }
+
  useEffect(()=>{let live=true;
-  Promise.all([get(key+'/draft'),get(key+'/tests')]).then(([draft,tests])=>{if(!live)return;
-   const value=draft?.rev>=p.revision?draft.source:p.source;if(draft?.rev>p.revision)rev.current=draft.rev;text.current=value;dirty.current=value!==p.source;init(value);saveTests(tests||[]);
-  }).catch(()=>{if(live){init(p.source);syncStatus('Browser storage unavailable')}});
+  get(key+'/draft').then(draft=>{if(!live)return;
+   const value=draft?.rev>=p.revision?draft.source:p.source;if(draft?.rev>p.revision)rev.current=draft.rev;text.current=value;dirty.current=value!==p.source;init(value);
+  }).catch(()=>{if(live){init(p.source);syncStatus('Saved')}});
   const timer=setInterval(flush,850);return()=>{live=false;clearInterval(timer);flush()};
- },[]);
- function edit(value){text.current=value;dirty.current=true;syncStatus('Saving…');set(key+'/draft',{source:value,rev:rev.current}).catch(()=>syncStatus('Local draft unavailable'))}
+ },[p.id,lang]);
+
+ function edit(value){text.current=value;dirty.current=true;syncStatus('Saving…');set(key+'/draft',{source:value,rev:rev.current}).catch(()=>{})}
+
  async function run(kind){
-  setBusy(true);result(null);msg('Sending…');
-  try{const token=Array.from(crypto.getRandomValues(new Uint8Array(18)),v=>v.toString(16).padStart(2,"0")).join("");const payload={source:text.current,token,tests:saved,language:lang};let response;
-   try{response=await api('/api/problems/'+p.id+'/'+kind,payload)}catch(e){if(!(e instanceof TypeError))throw e;response=await api('/api/problems/'+p.id+'/'+kind,payload)}
-   for(;;){const job=await api('/api/jobs/'+response.id);if(['done','error'].includes(job.state)){result(job.result);msg('');refreshHistory();break}msg(job.state==='queued'?'Queued':'Judging…');await new Promise(r=>setTimeout(r,450))}
+  setBusy(true);result(null);msg('Pending…');setConsoleTab('Result');
+  try{const token=Array.from(crypto.getRandomValues(new Uint8Array(18)),v=>v.toString(16).padStart(2,"0")).join("");const payload={source:text.current,token,language:lang};let response;
+   response=await api('/api/problems/'+p.id+'/'+kind,payload);
+   for(;;){const job=await api('/api/jobs/'+response.id);if(['done','error'].includes(job.state)){result(job.result);msg('');refreshHistory();break}msg(job.state==='queued'?'Queued…':'Judging…');await new Promise(r=>setTimeout(r,450))}
   }catch(e){msg(e.message)}finally{setBusy(false)}
  }
- async function remember(row){
-  const item={args:row.args,expected:row.expected};if(saved.some(x=>JSON.stringify(x)===JSON.stringify(item)))return;
-  if(saved.length>=12){msg('My Tests holds up to 12 cases.');return}
-  const list=[...saved,item];await set(key+'/tests',list);saveTests(list);
- }
- return <><div className="columns"><article className="card"><h1>{p.title}</h1><p>{p.statement}</p>{p.details?.difficulty&&<><p>{p.details.difficulty} · {p.details.topics.join(" / ")}</p><h2>Input and output</h2><p>{p.details.inputFormat}</p><p>{p.details.outputFormat}</p><p>{p.details.constraints.join(" · ")}</p><small>{p.details.execution.timeLimitMs} ms · {p.details.execution.memoryLimitMB} MB</small>{p.details.examples.map((e,i)=><div key={i}><pre>{e.input} → {e.output}</pre>{e.explanation}</div>)}</>}<h2>Examples</h2>{p.samples.map((c,i)=><div className="example" key={i}><code>{JSON.stringify(c.args.length===1?c.args[0]:c.args)}</code><span> → </span><code>{JSON.stringify(c.expected)}</code></div>)}<h2>My Tests <small>{saved.length}</small></h2>{saved.length===0?<p>Save a failed case from your results to rerun it here.</p>:saved.map((v,i)=><div className="example" key={i}><code>{JSON.stringify(v.args)} → {JSON.stringify(v.expected)}</code><button className="link" onClick={async()=>{const list=saved.filter((_,n)=>n!==i);await set(key+'/tests',list);saveTests(list)}}>Remove</button></div>)}</article>
- <section className="card"><div className="bar"><select aria-label="Language" value={lang} onChange={e=>pickLanguage(e.target.value)}><option value="python">Python</option><option value="cpp">C++17</option><option value="java">Java 21</option></select><small role="status">{sync}</small></div>{initial!==null&&<Editor lang={lang} initial={initial} onEdit={edit}/>}<div className="actions"><button className="secondary" disabled={busy||initial===null} onClick={()=>run('run')}>Run tests</button><button disabled={busy||initial===null} onClick={()=>run('submit')}>Submit solution</button></div></section></div>
- <section className="card result" aria-live="polite"><h2>Results</h2>{message||(!res&&'Run the examples or submit against the official suite.')}{res&&<><p><strong>{res.verdict}</strong>{res.total!=null&&' · '+res.passed+' / '+res.total+' passed'}</p>{res.skipped>0&&<p>{res.skipped} {res.skipped===1?'test':'tests'} skipped</p>}{res.diagnostic&&<pre>{res.diagnostic}</pre>}{res.cases.map(row=><div className="case" key={row.number}><b>Case {row.number}</b> {row.status}{row.status!=='Passed'&&row.args&&<><pre>{'Arguments: '+JSON.stringify(row.args)+'\nExpected: '+JSON.stringify(row.expected)+'\nActual: '+JSON.stringify(row.actual)}</pre><button className="secondary" onClick={()=>remember(row)}>Add to My Tests</button></>}</div>)}</>}</section><section className="card result"><h2>Official submissions</h2>{history.length===0?<p>No submissions yet.</p>:history.map(j=><div className="bar" key={j.id}><span>{new Date(j.received).toLocaleTimeString()} · {j.status}</span><button className="link" onClick={async()=>{try{const v=await api('/api/jobs/'+j.id);result(v.result);msg(v.result?'':v.state)}catch(e){msg(e.message)}}}>View result</button></div>)}</section></>
+
+ const samples = p.samples || [];
+ const details = p.details || {};
+
+ return <div className="lc-main">
+  {/* Left Panel: Problem Statement / Submissions */}
+  <div className="lc-panel">
+   <div className="lc-panel-tabs">
+    <button className={'lc-tab '+(descTab==='Description'?'active':'')} onClick={()=>setDescTab('Description')}>📄 Description</button>
+    <button className={'lc-tab '+(descTab==='Submissions'?'active':'')} onClick={()=>setDescTab('Submissions')}>🕒 Submissions ({history.length})</button>
+   </div>
+   <div className="lc-panel-content">
+    {descTab==='Description' ? (
+     <div>
+      <div style={{display:'flex',alignItems:'center',gap:'10px',marginBottom:'12px'}}>
+       <h1 style={{fontSize:'1.35rem',fontWeight:700,margin:0}}>{p.external_id ? `${p.external_id}. ` : ''}{p.title}</h1>
+       {details.difficulty&&<span className={'lc-difficulty '+details.difficulty}>{details.difficulty}</span>}
+      </div>
+
+      {details.topics&&details.topics.length>0&&(
+       <div style={{marginBottom:'16px'}}>
+        {details.topics.map(t=><span key={t} className="lc-tag">{t}</span>)}
+       </div>
+      )}
+
+      <div style={{fontSize:'0.95rem',lineHeight:1.7,color:'#262626',whiteSpace:'pre-line',marginBottom:'20px'}}>
+       {p.statement}
+      </div>
+
+      {/* Examples in LeetCode Box Style */}
+      {details.examples && details.examples.length>0 ? (
+       <div>
+        <h3 style={{fontSize:'1rem',color:'#111827',margin:'16px 0 8px 0'}}>Examples</h3>
+        {details.examples.map((ex,idx)=>(
+         <div key={idx} className="lc-example-box">
+          <div><strong style={{color:'#9ca3af'}}>Example {idx+1}:</strong></div>
+          <div style={{marginTop:'4px'}}><strong>Input:</strong> <code>{ex.input}</code></div>
+          <div><strong>Output:</strong> <code>{ex.output}</code></div>
+          {ex.explanation&&<div style={{color:'#9ca3af',marginTop:'4px'}}><strong>Explanation:</strong> {ex.explanation}</div>}
+         </div>
+        ))}
+       </div>
+      ) : samples.length>0 ? (
+       <div>
+        <h3 style={{fontSize:'1rem',color:'#111827',margin:'16px 0 8px 0'}}>Example Testcases</h3>
+        {samples.map((c,idx)=>(
+         <div key={idx} className="lc-example-box">
+          <div><strong style={{color:'#9ca3af'}}>Example {idx+1}:</strong></div>
+          <div><strong>Input:</strong> <code>{JSON.stringify(c.args.length===1?c.args[0]:c.args)}</code></div>
+          <div><strong>Output:</strong> <code>{JSON.stringify(c.expected)}</code></div>
+         </div>
+        ))}
+       </div>
+      ) : null}
+
+      {/* Constraints */}
+      {details.constraints && details.constraints.length>0 && (
+       <div style={{marginTop:'20px'}}>
+        <h3 style={{fontSize:'1rem',color:'#111827',marginBottom:'8px'}}>Constraints:</h3>
+        <ul style={{paddingLeft:'20px',color:'#374151',lineHeight:1.8}}>
+         {details.constraints.map((c,idx)=><li key={idx}><code>{c}</code></li>)}
+        </ul>
+       </div>
+      )}
+     </div>
+    ) : (
+     <div>
+      <h3 style={{fontSize:'1.1rem',color:'#111827',margin:'0 0 14px 0'}}>Submissions History</h3>
+      {history.length===0?<p style={{color:'#9ca3af'}}>No submissions recorded yet for this question.</p>:(
+       <table style={{width:'100%',borderCollapse:'collapse',fontSize:'0.9rem'}}>
+        <thead>
+         <tr style={{borderBottom:'1px solid #e5e7eb',color:'#9ca3af',textAlign:'left'}}>
+          <th style={{padding:'8px'}}>Time</th>
+          <th style={{padding:'8px'}}>Status</th>
+          <th style={{padding:'8px'}}>Action</th>
+         </tr>
+        </thead>
+        <tbody>
+         {history.map(j=>(
+          <tr key={j.id} style={{borderBottom:'1px solid #f3f4f6'}}>
+           <td style={{padding:'10px 8px',color:'#9ca3af'}}>{new Date(j.received).toLocaleTimeString()}</td>
+           <td style={{padding:'10px 8px'}}>
+            <span style={{fontWeight:600,color:j.status==='Accepted'?'#2cbb5d':j.status==='Passed'?'#2cbb5d':'#ef4444'}}>
+             {j.status}
+            </span>
+           </td>
+           <td style={{padding:'10px 8px'}}>
+            <button className="lc-btn-run" style={{padding:'3px 10px',fontSize:'0.75rem'}} onClick={async()=>{
+              try{
+                const v=await api('/api/jobs/'+j.id);
+                result(v.result);
+                setConsoleTab('Result');
+              }catch(e){msg(e.message)}
+            }}>Inspect</button>
+           </td>
+          </tr>
+         ))}
+        </tbody>
+       </table>
+      )}
+     </div>
+    )}
+   </div>
+  </div>
+
+  {/* Right Panel: Code Editor + Console & Results */}
+  <div className="lc-right-pane">
+   <div className="lc-editor-card">
+    <div className="lc-editor-toolbar">
+     <div style={{display:'flex',alignItems:'center',gap:'10px'}}>
+      <select className="lc-select" value={lang} onChange={e=>pickLanguage(e.target.value)}>
+       <option value="python">Python 3</option>
+       <option value="cpp">C++ 17</option>
+       <option value="java">Java 21</option>
+      </select>
+      <span style={{fontSize:'0.8rem',color:'#888'}}>● {sync}</span>
+     </div>
+    </div>
+    {initial!==null&&<Editor key={p.id+'/'+lang} lang={lang} initial={initial} onEdit={edit}/>}
+   </div>
+
+   {/* Bottom Testcase & Execution Console */}
+   <div className="lc-console">
+    <div className="lc-panel-tabs">
+     <button className={'lc-tab '+(consoleTab==='Testcase'?'active':'')} onClick={()=>setConsoleTab('Testcase')}>🧪 Testcase</button>
+     <button className={'lc-tab '+(consoleTab==='Result'?'active':'')} onClick={()=>setConsoleTab('Result')}>📊 Test Result</button>
+    </div>
+    <div className="lc-console-content">
+     {consoleTab==='Testcase' ? (
+      <div>
+       {samples.length>0 ? (
+        <>
+         <div className="lc-case-nav">
+          {samples.map((_,idx)=>(
+           <button key={idx} className={'lc-case-btn '+(activeCase===idx?'active':'')} onClick={()=>setActiveCase(idx)}>
+            Case {idx+1}
+           </button>
+          ))}
+         </div>
+         {samples[activeCase] && (
+          <div style={{background:'#f9fafb',padding:'12px',borderRadius:'6px',border:'1px solid #e5e7eb',fontSize:'0.88rem'}}>
+           <div style={{color:'#9ca3af',marginBottom:'4px'}}>Input:</div>
+           <pre style={{margin:'0 0 10px 0',color:'#111827',background:'#ffffff',border:'1px solid #e5e7eb',padding:'8px',borderRadius:'4px'}}>{JSON.stringify(samples[activeCase].args)}</pre>
+           <div style={{color:'#9ca3af',marginBottom:'4px'}}>Expected:</div>
+           <pre style={{margin:0,color:'#d97706',background:'#ffffff',border:'1px solid #e5e7eb',padding:'8px',borderRadius:'4px'}}>{JSON.stringify(samples[activeCase].expected)}</pre>
+          </div>
+         )}
+        </>
+       ) : <p style={{color:'#888'}}>No sample cases configured.</p>}
+      </div>
+     ) : (
+      <div>
+       {message && <div style={{color:'#ffa116',fontWeight:600}}>{message}</div>}
+       {!message && !res && <p style={{color:'#888'}}>Run your code against example testcases or submit your solution.</p>}
+       {res && (
+        <div>
+         <div style={{display:'flex',alignItems:'center',gap:'12px',marginBottom:'12px'}}>
+          <span className={'lc-verdict-tag '+res.verdict}>{res.verdict}</span>
+          {res.total!=null && <span style={{color:'#9ca3af',fontSize:'0.9rem'}}>{res.passed} / {res.total} testcases passed</span>}
+         </div>
+         {res.diagnostic && (
+          <pre style={{background:'#2d1d1f',border:'1px solid #7f1d1d',color:'#fca5a5',padding:'10px',borderRadius:'6px',fontSize:'0.85rem',whiteSpace:'pre-wrap'}}>
+           {res.diagnostic}
+          </pre>
+         )}
+         {res.cases && res.cases.map(row=>(
+          <div key={row.number} style={{background:'#f9fafb',padding:'10px',borderRadius:'6px',border:'1px solid #e5e7eb',marginBottom:'8px',fontSize:'0.85rem'}}>
+           <div style={{display:'flex',justifyContent:'space-between',marginBottom:'4px'}}>
+            <strong>Case {row.number}</strong>
+            <span style={{color:row.status==='Passed'?'#2cbb5d':'#ef4444',fontWeight:600}}>{row.status}</span>
+           </div>
+           {row.args && (
+            <div style={{color:'#9ca3af',fontSize:'0.82rem'}}>
+             <div>Args: <code>{JSON.stringify(row.args)}</code></div>
+             <div>Expected: <code>{JSON.stringify(row.expected)}</code></div>
+             {row.actual!==undefined && <div>Actual: <code>{JSON.stringify(row.actual)}</code></div>}
+            </div>
+           )}
+          </div>
+         ))}
+        </div>
+       )}
+      </div>
+     )}
+    </div>
+    <div className="lc-footer">
+     <button className="lc-btn-run" disabled={busy||initial===null} onClick={()=>run('run')}>
+      {busy&&consoleTab==='Result'?'Executing…':'▶ Run'}
+     </button>
+     <button className="lc-btn-submit" disabled={busy||initial===null} onClick={()=>run('submit')}>
+      Submit
+     </button>
+    </div>
+   </div>
+  </div>
+ </div>;
 }
+
 export function Workspace({cid}){
  const [w,load]=useState(null),[pid,choose]=useState(null),[error,fail]=useState(''),[lang,pick]=useState('python');
  useEffect(()=>{api('/api/workspace?contest='+cid).then(v=>{load(v);choose(v.problems[0]?.id)}).catch(e=>fail(e.message))},[cid]);
@@ -62,9 +274,28 @@ export function Workspace({cid}){
  useEffect(()=>{if(!ready)return;let live=true,timer;
  async function ping(){try{const d=await api('/api/contests/'+cid+'/heartbeat',{});if(live)record(d)}catch{}finally{if(live)timer=setTimeout(ping,9000+Math.random()*2000)}}
  timer=setTimeout(ping,Math.random()*10000);return()=>{live=false;clearTimeout(timer)}},[cid,ready]);
- if(!w)return <p role="status">{error||'Opening workspace…'}</p>;
+
+ if(!w)return <div style={{padding:'40px',textAlign:'center',color:'#9ca3af'}}>{error||'Loading workspace…'}</div>;
  const status=decision||w;
  if(status.eligible===false)return <section role="alert" style={{background:'#751a25',color:'white',padding:32}}><h1>Disqualified from CodeClash 1.0</h1><p>{status.reason}</p><p>Submissions are closed for your account. Contact the organizer for review.</p></section>;
+
  const p=w.problems.find(x=>x.id===pid);
- return <><div className="page-heading"><div><h1>{w.title}</h1><p>{w.name} · {w.enrollment}</p></div><a href={'/leaderboard/'+cid+'/'}>Leaderboard ↗</a></div><div className="bar"><select aria-label="Topic" value={topic} onChange={e=>{filter(e.target.value);choose(w.problems.find(x=>!e.target.value||x.details?.topics?.includes(e.target.value))?.id)}}><option value="">All topics</option>{[...new Set(w.problems.flatMap(x=>x.details?.topics||[]))].sort().map(t=><option key={t}>{t}</option>)}</select><select aria-label="Problem" value={pid||''} onChange={e=>choose(Number(e.target.value))}>{w.problems.filter(x=>!topic||x.details?.topics?.includes(topic)).map(x=><option key={x.id} value={x.id}>{x.title}</option>)}</select><small>Ends {new Date(w.ends).toLocaleString()}</small></div>{p?<Problem key={p.id+'/'+lang} w={w} p={{...p,...p.languages[lang]}} lang={lang} pickLanguage={pick}/>:<p>No published problems yet.</p>}</>
+
+ return <div className="lc-layout">
+  <div className="lc-header">
+   <div className="lc-header-left">
+    <a href="/" style={{color:'#ffa116',fontWeight:700,textDecoration:'none',fontSize:'1.1rem'}}>⚡ CodeClash</a>
+    <span style={{color:'#666'}}>|</span>
+    <select className="lc-select" value={pid||''} onChange={e=>choose(Number(e.target.value))}>
+     {w.problems.map((x,idx)=><option key={x.id} value={x.id}>{idx+1}. {x.title}</option>)}
+    </select>
+    {p&&p.details?.difficulty&&<span className={'lc-difficulty '+p.details.difficulty}>{p.details.difficulty}</span>}
+   </div>
+   <div className="lc-header-right">
+    <span style={{fontSize:'0.85rem',color:'#9ca3af'}}>{w.name} ({w.enrollment})</span>
+    <a href={'/leaderboard/'+cid+'/'} target="_blank" rel="noreferrer" className="lc-btn-run" style={{textDecoration:'none'}}>Leaderboard ↗</a>
+   </div>
+  </div>
+  {p?<ProblemView key={p.id+'/'+lang} w={w} p={{...p,...p.languages[lang]}} lang={lang} pickLanguage={pick}/>:<div style={{padding:'40px',textAlign:'center',color:'#9ca3af'}}>No published problems in this contest yet.</div>}
+ </div>;
 }

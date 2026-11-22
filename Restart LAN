@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ ! -t 0 && -n ${DISPLAY:-} && ${1:-} != --terminal ]]; then
+    exec x-terminal-emulator -e "$0" --terminal
+fi
+
+echo "=================================================="
+echo "      Restarting Contest LAN & Wi-Fi Hotspot      "
+echo "=================================================="
+project=$(cd -- "$(dirname -- "$0")" && pwd)
+lan="$project/LAN Server/service"
+
+echo "Requesting sudo privileges for network restart..."
+sudo -v
+
+echo "[1/4] Stopping active contest LAN network & restoring interfaces..."
+sudo contest-lan stop || true
+sleep 1
+
+echo "[2/4] Initializing preflight snapshot and starting Wi-Fi hotspot..."
+sudo contest-lan preflight
+sudo contest-lan start
+
+echo "[3/4] Configuring local DNS resolution..."
+sudo resolvectl default-route contestbr0 no || true
+sudo resolvectl domain contestbr0 '~codeclash.test' || true
+sudo resolvectl dns contestbr0 10.50.0.1 || true
+
+echo "[4/4] Verifying DNS resolution and confirming rollout..."
+getent ahostsv4 codeclash.test | awk '$1=="10.50.0.1" {found=1} END {exit !found}'
+sudo contest-lan confirm
+
+echo "--------------------------------------------------"
+echo "✅ Contest LAN & Wi-Fi Hotspot restarted successfully!"
+echo "   Clients can connect to the Wi-Fi and access:"
+echo "   http://codeclash.test/login/"
+echo "--------------------------------------------------"
+if [[ -t 0 ]]; then
+    read -rp "Press Enter to close."
+fi

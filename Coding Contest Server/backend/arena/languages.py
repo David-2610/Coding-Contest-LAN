@@ -10,7 +10,14 @@ ROOT = Path(__file__).resolve().parents[1] / "var/toolchain"
 JDK = "/tool/usr/lib/jvm/java-21-openjdk-amd64"
 GSON = "/tool/usr/share/java/gson.jar"
 LANGUAGES = ("python","cpp","java")
-TYPES = {"int":("int","int"),"bool":("bool","boolean"),"string":("string","String")}
+TYPES = {
+    "int": ("int", "int"),
+    "long": ("long long", "long"),
+    "float": ("double", "double"),
+    "double": ("double", "double"),
+    "bool": ("bool", "boolean"),
+    "string": ("string", "String")
+}
 def default_signature():
     return {"params":[["nums","int[]"]],"returns":"int"}
 
@@ -19,6 +26,12 @@ def typename(t,lang):
         item=typename(t[:-2],lang)
         return f"vector<{item}>" if lang=="cpp" else item+"[]"
     return TYPES[t][lang=="java"]
+
+def py_type(t):
+    if t.endswith("[]"):
+        return f"list[{py_type(t[:-2])}]"
+    mapping = {"int": "int", "long": "int", "float": "float", "double": "float", "bool": "bool", "string": "str"}
+    return mapping.get(t, "Any")
 
 def check_signature(name,sig):
     ident=r"[A-Za-z_][A-Za-z0-9_]*"
@@ -32,22 +45,37 @@ def check_signature(name,sig):
     typename(sig["returns"],"cpp")
 
 def starter(problem,language):
-    if problem.package:return problem.package["languages"][{"python":"python3","cpp":"cpp17","java":"java21"}[language]]["starterCode"]
-    if language=="python": return problem.starter
+    if problem.package and "languages" in problem.package and {"python":"python3","cpp":"cpp17","java":"java21"}[language] in problem.package["languages"]:
+        return problem.package["languages"][{"python":"python3","cpp":"cpp17","java":"java21"}[language]]["starterCode"]
     sig=problem.signature
-    args=", ".join(typename(t,language)+" "+n for n,t in sig["params"])
-    return f'{typename(sig["returns"],language)} {problem.function}({args}) {{\n    // Write your solution here\n}}\n'
+    fn=problem.function
+    if language=="python":
+        args=", ".join(f"{n}: {py_type(t)}" for n,t in sig["params"])
+        ret=py_type(sig["returns"])
+        return f"class Solution:\n    def {fn}(self, {args}) -> {ret}:\n        # Write your solution here\n        pass\n"
+    if language=="cpp":
+        args=", ".join(f"{typename(t, 'cpp')}& {n}" if t.endswith("[]") or t=="string" else f"{typename(t, 'cpp')} {n}" for n,t in sig["params"])
+        return f"class Solution {{\npublic:\n    {typename(sig['returns'], 'cpp')} {fn}({args}) {{\n        // Write your solution here\n        \n    }}\n}};\n"
+    if language=="java":
+        args=", ".join(f"{typename(t, 'java')} {n}" for n,t in sig["params"])
+        return f"class Solution {{\n    public {typename(sig['returns'], 'java')} {fn}({args}) {{\n        // Write your solution here\n        \n    }}\n}}\n"
 
 def driver(lang,source,function,sig):
     check_signature(function,sig)
     if lang=="cpp":
-        args=", ".join(f"a.at({i}).get<{typename(t,lang)}>()" for i,(_,t) in enumerate(sig["params"]))
-        return ('#include <bits/stdc++.h>\n#include <nlohmann/json.hpp>\nusing namespace std;\nclass Solution { public:\n'
-                +source+'\n};\nint main(){ auto a=nlohmann::json::parse(cin); auto original=cout.rdbuf(cerr.rdbuf()); auto value=Solution().'
-                +function+'('+args+'); cout.rdbuf(original); cout << nlohmann::json(value).dump(); }')
-    args=", ".join(f"g.fromJson(a.get({i}), {typename(t,lang)}.class)" for i,(_,t) in enumerate(sig["params"]))
-    return ('import java.util.*;\nimport java.io.*;\nimport com.google.gson.*;\nclass Solution {\n'+source+
-            '\n}\nclass Driver { public static void main(String[] unused) throws Exception { Gson g=new Gson(); JsonArray a=JsonParser.parseReader(new InputStreamReader(System.in)).getAsJsonArray(); PrintStream out=System.out; System.setOut(System.err); out.print(g.toJson(new Solution().'+function+'('+args+'))); }}')
+        decls = "\n    ".join(f"auto p{i} = a.at({i}).get<{typename(t, 'cpp')}>();" for i, (_, t) in enumerate(sig["params"]))
+        call_args = ", ".join(f"p{i}" for i in range(len(sig["params"])))
+        has_class = "class Solution" in source
+        body = source if has_class else f"class Solution {{\npublic:\n{source}\n}};"
+        return (f"#include <bits/stdc++.h>\n#include <nlohmann/json.hpp>\nusing namespace std;\n"
+                f"{body}\nint main(){{\n    auto a=nlohmann::json::parse(cin);\n    auto original=cout.rdbuf(cerr.rdbuf());\n    {decls}\n    auto value=Solution()."
+                f"{function}({call_args});\n    cout.rdbuf(original);\n    cout << nlohmann::json(value).dump();\n}}")
+    elif lang=="java":
+        args=", ".join(f"g.fromJson(a.get({i}), {typename(t,lang)}.class)" for i,(_,t) in enumerate(sig["params"]))
+        has_class = "class Solution" in source
+        body = source if has_class else f"class Solution {{\n{source}\n}}"
+        return ('import java.util.*;\nimport java.io.*;\nimport com.google.gson.*;\n'+body+
+                f'\nclass Driver {{ public static void main(String[] unused) throws Exception {{ Gson g=new Gson(); JsonArray a=JsonParser.parseReader(new InputStreamReader(System.in)).getAsJsonArray(); PrintStream out=System.out; System.setOut(System.err); out.print(g.toJson(new Solution().{function}({args}))); }} }}')
 
 def launch(command,folder,data,build,execution=None):
     # Only this isolated scope sees compiler subprocesses. Its cgroup bounds the whole tree.
@@ -77,8 +105,10 @@ def launch(command,folder,data,build,execution=None):
         out.seek(0);return rc,out.read(size),log[-3000:]
 
 def compiled(job,folder):
-    stdio=bool(job.problem.package)
-    code=job.source if stdio else driver(job.language,job.source,job.function,job.problem.signature)
+    # If job has signature/typed function, use driver (LeetCode format)
+    # Only legacy pure-stdio questions without function signature use raw stdio
+    stdio = bool(job.problem.package and not job.problem.signature and job.problem.function == "solve")
+    code = job.source if stdio else driver(job.language, job.source, job.function, job.problem.signature)
     if job.language=="python":
         (folder/"main.py").write_text(code)
         run=["/usr/bin/python3","-I","-B","/job/main.py"]
@@ -98,7 +128,8 @@ def compiled(job,folder):
         if rc:return None,log or "Compile limit exceeded"
         path=folder/target;path.write_bytes(binary);path.chmod(0o500)
     def execute(args):
-        rc,output,log=launch(run,folder,args[0].encode() if stdio else json.dumps(args).encode(),False,job.problem.package.get("execution"))
+        payload = (args[0].encode() if isinstance(args[0], str) else json.dumps(args[0]).encode()) if stdio else json.dumps(args).encode()
+        rc,output,log=launch(run,folder,payload,False,job.problem.package.get("execution") if job.problem.package else None)
         if rc:return ("Memory limit exceeded" if rc==-1001 else "Time limit" if rc in (-1002,15,143,152) else "Runtime error"),log or None
         if stdio:return "Returned",output.decode(errors="replace").rstrip()
         try:return "Returned",json.loads(output)

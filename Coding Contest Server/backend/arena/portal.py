@@ -237,18 +237,53 @@ def author(request,cid):
         imported_ids = []
         for d in items:
             validate(d,schema)
-            ids=[t["id"] for t in d["testCases"]]
+            ids=[t.get("id") for t in d.get("testCases", []) if "id" in t]
             if len(set(ids))!=len(ids):return error(f"Test identifiers must be unique in {d.get('id', 'question')}.")
-            d["topics"]=list(dict.fromkeys(" ".join(t.split()).casefold() for t in d["topics"]))
-            if "" in d["topics"]:return error("Topics cannot be empty.")
-            cases=[dict(args=[t["input"]],expected=t["expectedOutput"],sample=t["visibility"]=="public") for t in d["testCases"]]
+            if "topics" in d:
+                d["topics"]=list(dict.fromkeys(" ".join(t.split()).casefold() for t in d["topics"]))
+            
+            # Extract function and signature
+            function_name = d.get("function")
+            sig = d.get("signature")
+            
+            # Format test cases
+            cases = []
+            for t in d.get("testCases", []):
+                # LeetCode format: "args" list and "expected"
+                if "args" in t and "expected" in t:
+                    args = t["args"] if isinstance(t["args"], list) else [t["args"]]
+                    expected = t["expected"]
+                else:
+                    # Legacy fallback
+                    args = [t.get("input", "")]
+                    expected = t.get("expectedOutput", "")
+                sample = t.get("visibility", "public") == "public" or bool(t.get("sample", False))
+                cases.append(dict(args=args, expected=expected, sample=sample))
+            
             p=Problem.objects.filter(contest=c, external_id=d["id"]).first()
             if p and request.GET.get("replace")!="1":
                 return error(f"Question ID '{d['id']}' already exists in this contest. Select replace to overwrite.",409)
             p=p or Problem(contest=c,external_id=d["id"])
-            p.title=d["title"];p.statement=d["description"];p.package=d;p.cases=cases;p.published=True
-            p.function="solve";p.starter=d["languages"]["python3"]["starterCode"]
-            p.full_clean();p.save()
+            p.title=d["title"]
+            p.statement=d.get("description", "")
+            p.package=d
+            p.cases=cases
+            p.published=True
+            
+            # Function name and starter code
+            p.function = function_name or "solve"
+            if sig:
+                p.signature = sig
+            
+            py_starter = d.get("languages", {}).get("python3", {}).get("starterCode")
+            if py_starter:
+                p.starter = py_starter
+            else:
+                from .languages import starter as gen_starter
+                p.starter = gen_starter(p, "python")
+            
+            p.full_clean()
+            p.save()
             imported_ids.append(p.pk)
     except SchemaError as e:return error(f"{e.json_path}: {e.message}"[:400])
     except (ValidationError,KeyError,ValueError,TypeError,IntegrityError) as e:return error(str(e))
@@ -256,7 +291,7 @@ def author(request,cid):
 
 @organizer
 def question_bank(request):
-    """List all unique questions available across all contests to import into any contest."""
+    """List all unique questions available across all contests (or bank) to import into any contest."""
     seen = set()
     questions = []
     for p in Problem.objects.select_related("contest").order_by("-id"):
@@ -268,6 +303,8 @@ def question_bank(request):
             "id": p.pk,
             "externalId": p.external_id or f"P{p.pk}",
             "title": p.title,
+            "function": p.function,
+            "signature": p.signature,
             "difficulty": p.package.get("difficulty", "Normal") if p.package else "Normal",
             "maxScore": p.package.get("scoring", {}).get("maxScore", 100) if p.package else 100,
             "topics": p.package.get("topics", []) if p.package else [],
@@ -276,6 +313,80 @@ def question_bank(request):
             "fromContestId": p.contest.pk
         })
     return JsonResponse({"questions": questions})
+
+@organizer
+@require_POST
+def bank_upload(request):
+    """Upload bulk questions directly to the Question Bank (associated with bank or active contest)."""
+    try:
+        from jsonschema import validate, ValidationError as SchemaError
+        raw = json.loads(request.body)
+        items = raw if isinstance(raw, list) else [raw]
+        if not items:
+            return error("Supply at least one question.", 400)
+        from django.conf import settings
+        schema = json.loads((settings.BASE.parent/"frontend/dist/question-schema.json").read_text())
+        
+        # Pick or create a designated Bank contest
+        bank_contest, _ = Contest.objects.get_or_create(
+            title="Question Bank Repository",
+            defaults={
+                "stage": "Draft",
+                "starts": timezone.now() - timedelta(days=365),
+                "ends": timezone.now() + timedelta(days=365*10),
+            }
+        )
+        
+        imported = []
+        with transaction.atomic():
+            for d in items:
+                validate(d, schema)
+                ids = [t.get("id") for t in d.get("testCases", []) if "id" in t]
+                if len(set(ids)) != len(ids):
+                    return error(f"Test identifiers must be unique in {d.get('id', 'question')}.")
+                if "topics" in d:
+                    d["topics"] = list(dict.fromkeys(" ".join(t.split()).casefold() for t in d["topics"]))
+                
+                function_name = d.get("function") or "solve"
+                sig = d.get("signature")
+                cases = []
+                for t in d.get("testCases", []):
+                    if "args" in t and "expected" in t:
+                        args = t["args"] if isinstance(t["args"], list) else [t["args"]]
+                        expected = t["expected"]
+                    else:
+                        args = [t.get("input", "")]
+                        expected = t.get("expectedOutput", "")
+                    sample = t.get("visibility", "public") == "public" or bool(t.get("sample", False))
+                    cases.append(dict(args=args, expected=expected, sample=sample))
+                
+                p = Problem.objects.filter(contest=bank_contest, external_id=d["id"]).first()
+                if not p:
+                    p = Problem(contest=bank_contest, external_id=d["id"])
+                
+                p.title = d["title"]
+                p.statement = d.get("description", "")
+                p.package = d
+                p.cases = cases
+                p.published = True
+                p.function = function_name
+                if sig:
+                    p.signature = sig
+                py_starter = d.get("languages", {}).get("python3", {}).get("starterCode")
+                if py_starter:
+                    p.starter = py_starter
+                else:
+                    from .languages import starter as gen_starter
+                    p.starter = gen_starter(p, "python")
+                p.full_clean()
+                p.save()
+                imported.append(p.pk)
+        
+        return JsonResponse({"ok": True, "count": len(imported), "ids": imported}, status=201)
+    except SchemaError as e:
+        return error(f"{e.json_path}: {e.message}"[:400])
+    except Exception as e:
+        return error(str(e))
 
 @organizer
 @require_POST
@@ -412,12 +523,19 @@ def transition(request,cid):
     target=request.POST.get("stage")
     allowed={"Draft":"Scheduled","Scheduled":"Waiting Room","Waiting Room":"Active","Active":"Ended","Ended":"Waiting Room"}
     if c.stage=="automatic" and c.starts<=timezone.now()<c.ends:allowed["automatic"]="Ended"
-    if c.stage=="Active" and c.ends<=timezone.now() and target!="Ended":return error("Contest already ended.",409)
-    if target!=allowed.get(c.stage) and not (c.stage=="Ended" and target in ("Waiting Room","Scheduled","Active")):
-        return error("Invalid contest transition.",409)
+    
+    # If contest time has expired or stage is Ended/Active past ends, permit restarting to Waiting Room or Scheduled
     now=timezone.now()
+    is_expired = c.ends <= now
+    is_restart = target in ("Waiting Room", "Scheduled")
+    
+    if not is_restart and c.stage=="Active" and is_expired and target!="Ended":
+        return error("Contest already ended. End it first or restart to Waiting Room.",409)
+    if target!=allowed.get(c.stage) and not ((c.stage=="Ended" or is_expired) and target in ("Waiting Room","Scheduled","Active")):
+        return error("Invalid contest transition.",409)
+
     if target=="Active":
-        duration=c.ends-c.starts if c.ends>c.starts else timedelta(minutes=c.duration_minutes or 60)
+        duration=c.ends-c.starts if c.ends>c.starts and not is_expired else timedelta(minutes=c.duration_minutes or 60)
         c.starts=now
         c.ends=now+duration
         c.final=None
@@ -425,7 +543,7 @@ def transition(request,cid):
     elif target=="Ended":
         c.ends=now
     elif target in ("Waiting Room","Scheduled"):
-        # Resetting or restarting contest
+        # Resetting or restarting contest with a fresh clock duration
         duration=timedelta(minutes=c.duration_minutes or 60)
         c.starts=now
         c.ends=now+duration
