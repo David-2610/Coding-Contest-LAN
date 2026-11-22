@@ -310,6 +310,178 @@ function BankManager(){
   </div>;
 }
 
+
+function ConnectionMonitor({rows, events}){
+  const [selected, setSelected] = useState(null);
+  const [filter, setFilter] = useState('All');
+  const [search, setSearch] = useState('');
+
+  const filtered = rows.filter(r => {
+    const matchesSearch = (r.name + ' ' + r.enrollment).toLowerCase().includes(search.toLowerCase());
+    if(!matchesSearch) return false;
+    if(filter === 'All') return true;
+    if(filter === 'Online') return r.presence === 'Online';
+    if(filter === 'Disconnected') return r.presence === 'Disconnected';
+    if(filter === 'Unstable') return r.presence === 'Unstable';
+    return true;
+  });
+
+  const participantEvents = selected ? events.filter(e => e.entry__id === selected.id || e.entry__display === selected.name) : [];
+
+  return (
+    <div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:'12px',marginBottom:'16px'}}>
+        <div>
+          <h2 style={{margin:'0 0 4px 0'}}>Live Member Connection Status</h2>
+          <p style={{margin:0,fontSize:'0.88rem',color:'#64748b'}}>
+            Click any participant to view their connection stability, disconnect counts, and timeline.
+          </p>
+        </div>
+        <div style={{display:'flex',gap:'8px'}}>
+          <input
+            placeholder="Search candidate..."
+            value={search}
+            onChange={e=>setSearch(e.target.value)}
+            style={{padding:'6px 12px',borderRadius:'6px',border:'1px solid #cbd5e1',fontSize:'0.85rem'}}
+          />
+          <select
+            value={filter}
+            onChange={e=>setFilter(e.target.value)}
+            style={{padding:'6px 12px',borderRadius:'6px',border:'1px solid #cbd5e1',fontSize:'0.85rem'}}
+          >
+            <option value="All">All ({rows.length})</option>
+            <option value="Online">Online ({rows.filter(r=>r.presence==='Online').length})</option>
+            <option value="Unstable">Unstable ({rows.filter(r=>r.presence==='Unstable').length})</option>
+            <option value="Disconnected">Disconnected ({rows.filter(r=>r.presence==='Disconnected').length})</option>
+          </select>
+        </div>
+      </div>
+
+      <div style={{display:'grid',gridTemplateColumns:selected ? '1fr 340px' : '1fr',gap:'16px',alignItems:'start'}}>
+        {/* Left: Participant Cards Grid */}
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill, minmax(280px, 1fr))',gap:'12px'}}>
+          {filtered.map(r => {
+            const isOnline = r.presence === 'Online';
+            const isUnstable = r.presence === 'Unstable';
+            const statusColor = isOnline ? '#10b981' : isUnstable ? '#f59e0b' : '#ef4444';
+            const statusBg = isOnline ? '#ecfdf5' : isUnstable ? '#fffbeb' : '#fef2f2';
+            const isPicked = selected?.id === r.id;
+
+            return (
+              <div
+                key={r.id}
+                onClick={() => setSelected(isPicked ? null : r)}
+                style={{
+                  background: isPicked ? '#f8fafc' : '#ffffff',
+                  border: isPicked ? '2px solid #6366f1' : '1px solid #e2e8f0',
+                  borderRadius: '10px',
+                  padding: '14px 16px',
+                  cursor: 'pointer',
+                  boxShadow: isPicked ? '0 4px 12px rgba(99,102,241,0.12)' : '0 1px 3px rgba(0,0,0,0.03)',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+                  <div>
+                    <strong style={{fontSize:'0.95rem',color:'#1e293b',display:'block'}}>{r.name}</strong>
+                    <span style={{fontSize:'0.8rem',color:'#64748b'}}>{r.enrollment}</span>
+                  </div>
+                  <span style={{
+                    display:'inline-flex',
+                    alignItems:'center',
+                    gap:'6px',
+                    fontSize:'0.75rem',
+                    fontWeight:600,
+                    padding:'3px 9px',
+                    borderRadius:'12px',
+                    background: statusBg,
+                    color: statusColor,
+                    border: `1px solid ${statusColor}33`
+                  }}>
+                    <span style={{width:'7px',height:'7px',borderRadius:'50%',background:statusColor}}/>
+                    {r.presence}
+                  </span>
+                </div>
+
+                <div style={{display:'flex',justifyContent:'space-between',marginTop:'14px',paddingTop:'10px',borderTop:'1px solid #f1f5f9',fontSize:'0.82rem',color:'#64748b'}}>
+                  <div>
+                    Reconnects: <strong style={{color: r.reconnects > 2 ? '#ef4444' : '#1e293b'}}>{r.reconnects}</strong>
+                  </div>
+                  <div>
+                    {r.last ? `Last seen: ${clock(r.last)}` : 'Not joined yet'}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          {!filtered.length && <p style={{color:'#64748b',padding:'20px 0'}}>No matching participants found.</p>}
+        </div>
+
+        {/* Right: Selected Member Detail Drawer */}
+        {selected && (
+          <div style={{
+            background:'#ffffff',
+            border:'1px solid #cbd5e1',
+            borderRadius:'10px',
+            padding:'18px',
+            boxShadow:'0 4px 14px rgba(0,0,0,0.06)',
+            position:'sticky',
+            top:'20px'
+          }}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:'14px'}}>
+              <div>
+                <h3 style={{margin:'0 0 2px 0',fontSize:'1.1rem'}}>{selected.name}</h3>
+                <span style={{fontSize:'0.82rem',color:'#64748b'}}>{selected.enrollment} · @{selected.username}</span>
+              </div>
+              <button
+                className="link"
+                style={{color:'#64748b',fontSize:'1.2rem',padding:'0 4px',lineHeight:1}}
+                onClick={()=>setSelected(null)}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px',marginBottom:'16px'}}>
+              <div style={{background:'#f8fafc',padding:'10px',borderRadius:'6px',border:'1px solid #e2e8f0'}}>
+                <span style={{fontSize:'0.75rem',color:'#64748b',display:'block'}}>Current State</span>
+                <strong style={{
+                  color: selected.presence === 'Online' ? '#10b981' : selected.presence === 'Unstable' ? '#f59e0b' : '#ef4444'
+                }}>{selected.presence}</strong>
+              </div>
+              <div style={{background:'#f8fafc',padding:'10px',borderRadius:'6px',border:'1px solid #e2e8f0'}}>
+                <span style={{fontSize:'0.75rem',color:'#64748b',display:'block'}}>Total Disconnects</span>
+                <strong style={{color: selected.reconnects > 2 ? '#ef4444' : '#1e293b'}}>{selected.reconnects} times</strong>
+              </div>
+              <div style={{background:'#f8fafc',padding:'10px',borderRadius:'6px',border:'1px solid #e2e8f0'}}>
+                <span style={{fontSize:'0.75rem',color:'#64748b',display:'block'}}>Connected Time</span>
+                <strong>{selected.connectedSeconds != null ? `${selected.connectedSeconds}s` : '—'}</strong>
+              </div>
+              <div style={{background:'#f8fafc',padding:'10px',borderRadius:'6px',border:'1px solid #e2e8f0'}}>
+                <span style={{fontSize:'0.75rem',color:'#64748b',display:'block'}}>Submissions</span>
+                <strong>{selected.submits || 0}</strong>
+              </div>
+            </div>
+
+            <h4 style={{fontSize:'0.9rem',margin:'14px 0 8px 0',color:'#334155'}}>Recent Activity Timeline</h4>
+            <div style={{maxHeight:'240px',overflowY:'auto',display:'flex',flexDirection:'column',gap:'8px'}}>
+              {participantEvents.map(e => (
+                <div key={e.id} style={{fontSize:'0.82rem',display:'flex',justifyContent:'space-between',padding:'6px 8px',borderRadius:'4px',background:'#f1f5f9'}}>
+                  <span style={{color: e.kind === 'Connected' || e.kind === 'Reconnected' ? '#059669' : '#dc2626',fontWeight:500}}>
+                    {e.kind === 'Heartbeat lost' ? '⚠️ Disconnected / Heartbeat lost' : '✅ ' + e.kind}
+                  </span>
+                  <span style={{color:'#64748b'}}>{clock(e.at)}</span>
+                </div>
+              ))}
+              {!participantEvents.length && <p style={{fontSize:'0.8rem',color:'#94a3b8',margin:0}}>No connection logs for this member.</p>}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function Decision({row,done}){
  const [open,toggle]=useState(false),[err,fail]=useState('');
  return open?<form onSubmit={async e=>{e.preventDefault();try{await postForm('/api/organizer/entries/'+row.id+'/eligibility',new FormData(e.target));toggle(false);done()}catch(e){fail(e.message)}}}><input type="hidden" name="action" value={row.eligible?'disqualify':'reinstate'}/><input aria-label="Decision reason" name="reason" required maxLength={800} placeholder="Decision reason"/><button>Confirm</button><button type="button" className="link" onClick={()=>toggle(false)}>Cancel</button>{err}</form>:<button className="link" onClick={()=>toggle(true)}>{row.eligible?'Disqualify':'Reinstate'}</button>
@@ -328,7 +500,7 @@ export function Organizer({session}){
  <div className="tabs" role="tablist">{['Participants','Connection events','Problems','Question Bank','Standings','Submissions','E-Code Cloud'].map(t=><button role="tab" aria-selected={tab===t} key={t} onClick={()=>{select(t);setForm('')}}>{t}</button>)}</div>
  {data&&<section className="card panel">
  {tab==='Participants'&&<><h2>Contest roster</h2><div className="actions"><input aria-label="Search entries" placeholder="Name, username or enrollment" value={query} onChange={e=>search(e.target.value)}/><select aria-label="Connection filter" value={status} onChange={e=>filter(e.target.value)}>{['All','Online','Unstable','Disconnected','Unknown','Disqualified'].map(s=><option key={s}>{s}</option>)}</select><select aria-label="Sort entries" value={order} onChange={e=>sort(e.target.value)}><option value="name">Name</option><option value="submits">Most submissions</option></select></div><table><thead><tr>{['Participant','Enrollment','Workspace','Missed (est.)','Observed duration','Reconnects','Last seen','Submissions','Eligibility'].map(h=><th key={h}>{h}</th>)}</tr></thead><tbody>{visible.map(r=><tr key={r.id}><td>{r.name}<small>{r.username}</small></td><td>{r.enrollment}</td><td><span className={'pill '+r.presence}>{r.presence}</span></td><td>{r.missed??"—"}</td><td>{r.connectedSeconds==null?"—":r.connectedSeconds+" s"}</td><td>{r.reconnects}</td><td>{r.last?clock(r.last):'—'}</td><td>{r.submits}</td><td>{!r.eligible&&<strong>Disqualified </strong>}{data.final?(r.eligible?"Eligible":"Disqualified"):<Decision row={r} done={()=>api("/api/organizer/"+cid).then(load)}/>}</td></tr>)}</tbody></table>{!data.rows.length&&<p>Entries appear when a candidate enters this contest.</p>}</>}
- {tab==='Connection events'&&<><h2>Connection activity</h2><p>Workspaces check in every 10 seconds. A 40-second gap triggers an alert. Closing the tab or device sleep can also cause a gap.</p>{data.events.map(e=><div className="event" key={e.id}><span className={'dot '+(e.kind==='Connected'?'good':'bad')}/><b>{e.entry__display}</b><span>{e.kind}</span><time>{clock(e.at)}</time></div>)}{!data.events.length&&<p>No workspace events yet.</p>}</>}
+ {tab==='Connection events'&&<ConnectionMonitor rows={data.rows||[]} events={data.events||[]}/>}
  {tab==='Question Bank'&&<BankManager/>}
   {tab==='Problems'&&<><div className="bar"><h2>Problem set ({data.problems.length})</h2><div style={{display:'flex',gap:'8px'}}><button className="secondary" onClick={()=>setForm(form==='bank'?'':'bank')}>Import from Question Bank</button><button onClick={()=>setForm(form==='problem'?'':'problem')}>Add problem</button></div></div>{form==='bank'?<BankPicker cid={cid} onDone={()=>setForm('')}/>:form==='problem'?<Author cid={cid} onDone={()=>setForm('')}/>:data.problems.map(p=><div className="event" key={p.id}><b>{p.title}</b><span>{p.published?'Published':'Draft'}</span></div>)}{!data.problems.length&&!form&&<p style={{padding:'12px 0',color:'#64748b'}}>No problems added yet. Click &quot;Import from Question Bank&quot; to reuse questions from previous contests, or &quot;Add problem&quot; to import a question JSON file.</p>}</>}
  {tab==='Standings'&&<><div className="bar"><h2>Live standings</h2><a href={'/leaderboard/'+cid+'/'}>Open projector ↗</a></div>{data.scores.map((s,i)=><div className="event" key={i}><b>#{s.rank} {s.name}</b><span>{s.score??s.solved} points · {s.solved} solved</span><time>{s.seconds}s</time></div>)}{data.final&&<EcodeTransfer key={cid} publish url={"/api/organizer/"+cid+"/publish"}/>} {data.final&&<a href={'/organizer-export/'+cid}>Download final JSON</a>}</>}

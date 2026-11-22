@@ -202,7 +202,7 @@ def monitor(request,cid):
     live_since=dict(ConnectionEvent.objects.filter(entry__contest=c,kind__in=("Connected","Reconnected")).values_list("entry").annotate(at=Max("at")))
     for e in entries:
         rows.append(dict(id=e.pk,name=e.display,username=e.user.username,enrollment=e.enrollment,reconnects=reconnects.get(e.pk,0),missed=max(0,int((now-e.last_seen).total_seconds()//10)-1) if e.last_seen else None,connectedSeconds=max(0,int((e.last_seen-live_since[e.pk]).total_seconds())) if e.pk in live_since and e.last_seen else None,presence=("Unstable" if e.presence=="Online" and e.last_seen and now-e.last_seen>UNSTABLE else e.presence),last=e.last_seen,eligible=e.eligible,submits=counts.get(e.pk,0)))
-    events=list(ConnectionEvent.objects.filter(entry__contest=c).order_by("-id").values("id","at","kind","entry__display")[:30])
+    events=list(ConnectionEvent.objects.filter(entry__contest=c).order_by("-id").values("id","at","kind","entry__id","entry__display")[:100])
     jobs=[dict(id=j.pk,entry__display=j.entry.display,problem__title=j.problem.title,language=j.language,verdict=(j.result or {}).get("verdict",j.state)) for j in Job.objects.filter(entry__contest=c,kind__in=["submit","archive"]).select_related("entry","problem").defer("source","cases").order_by("-received")[:30]]
     return JsonResponse(dict(activeJobs=Job.objects.filter(entry__contest=c,state="running").count(),rows=rows,events=events,scores=scores,jobs=jobs,submissions=sum(counts.values()),problems=list(c.problem_set.values("id","title","published")),final=c.final is not None))
 
